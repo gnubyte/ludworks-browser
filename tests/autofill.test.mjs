@@ -144,3 +144,53 @@ test('bundled fill script refuses sign-up forms', async () => {
   doc.body.append(doc.el('form', {}, doc.el('input', { type: 'password', autocomplete: 'new-password' })));
   assert.deepEqual(await runFill(doc, payload()), { ok: false, error: 'signup_form' });
 });
+
+// ---- offer-to-save capture script: nothing is ever rendered in the page (anti-clickjacking) -----------
+
+test('bundled capture script reports a trusted submit but never injects UI into the page or listens for an answer', async () => {
+  const code = await bundle(path.join(SRC, 'content', 'capture.js'), { root: SRC });
+  const doc = new FakeDocument({ origin: 'https://evil.duckdns.org', path: '/login' });
+  const user = doc.el('input', { type: 'text', name: 'login', value: 'alice' });
+  const pass = doc.el('input', { type: 'password', name: 'password', value: 'attacker-chosen' });
+  const form = doc.el('form', {}, user, pass);
+  doc.body.append(form);
+  for (const n of [doc.body, form, user, pass]) {
+    n.closest = function closest(sel) {
+      const tags = sel.split(',').map((s) => s.trim().split('[')[0].toUpperCase());
+      for (let p = this; p; p = p.parentElement) if (tags.includes(p.tagName)) return p;
+      return null;
+    };
+    n.querySelector = (sel) => (sel.includes('password') ? pass : null);
+  }
+  const listeners = {};
+  const domWrites = [];
+  doc.addEventListener = (type, fn) => (listeners[type] = fn);
+  for (const m of ['createElement', 'createElementNS', 'importNode']) doc[m] = () => domWrites.push(m);
+  const bodyAppend = doc.body.append.bind(doc.body);
+  doc.body.append = (...k) => (domWrites.push('body.append'), bodyAppend(...k));
+  doc.body.appendChild = () => domWrites.push('body.appendChild');
+  doc.documentElement = { appendChild: () => domWrites.push('html.appendChild'), append: () => domWrites.push('html.append') };
+  const sent = [];
+  const onMessage = [];
+  const ext = { runtime: { sendMessage: async (m) => (sent.push(m), { pending: true }), onMessage: { addListener: (f) => onMessage.push(f) } } };
+  const timers = [];
+  const sandbox = { document: doc, location: doc.location, URL, Event: FakeEvent, chrome: ext, setTimeout: (f) => timers.push(f), Date };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(code, sandbox, { filename: 'content/capture.js' });
+  const ev = { type: 'submit', isTrusted: true, target: form };
+  listeners.submit(ev);
+  await new Promise((r) => setImmediate(r));
+  for (const t of timers) t();
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(sent.map((m) => m.type).sort(), ['capture.loaded', 'capture.submitted']);
+  assert.equal(sent.find((m) => m.type === 'capture.submitted').password, 'attacker-chosen');
+  assert.deepEqual(domWrites, [], 'no prompt is created in the page DOM');
+  assert.equal(doc.body.children.length, 1);
+  assert.equal(onMessage.length, 0, 'the content script receives no Save/Update decision');
+  // untrusted (page-synthesised) submits are ignored
+  sent.length = 0;
+  listeners.submit({ type: 'submit', isTrusted: false, target: form });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(sent.length, 0);
+});
