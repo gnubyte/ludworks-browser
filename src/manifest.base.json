@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Ludworks Passwords",
+  "short_name": "Ludworks",
+  "description": "End-to-end encrypted password manager for your self-hosted Ludworks server.",
+  "version": "0.0.0",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Ludworks Passwords",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "permissions": ["storage", "unlimitedStorage", "alarms", "idle", "activeTab", "scripting", "clipboardWrite"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Ctrl+Shift+L", "mac": "Command+Shift+L" },
+      "description": "Open Ludworks Passwords"
+    },
+    "fill-login": {
+      "suggested_key": { "default": "Ctrl+Shift+F", "mac": "Command+Shift+F" },
+      "description": "Fill the best matching login on this page"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self'; style-src 'self'; connect-src https: http://localhost:* http://127.0.0.1:*"
+  }
+}

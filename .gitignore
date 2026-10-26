@@ -1,0 +1,24 @@
+# Build output and packages
+/dist/
+*.zip
+*.xpi
+*.crx
+.web-ext-artifacts/
+
+# Signing keys must never be committed
+*.pem
+*.key
+
+# Tooling
+node_modules/
+coverage/
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini

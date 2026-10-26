@@ -1,0 +1,31 @@
+# Weekly update proposals for the SHA-pinned GitHub Actions and the hash-pinned, test-only
+# Python requirements of CI (.github/requirements/*.txt). The extension has no dependencies;
+# review every bump like a code change.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    # Let new releases age a few days before proposing them (supply-chain hygiene).
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - '*'
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: pip
+    directory: /.github/requirements
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: deps

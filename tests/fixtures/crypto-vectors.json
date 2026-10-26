@@ -1,0 +1,100 @@
+{
+  "generator": "ludworks-browser/scripts/vectors/make_vectors.py (python cryptography)",
+  "kdf": [
+    {
+      "name": "ascii-600k",
+      "password": "correct horse battery staple",
+      "kdf": "pbkdf2-sha256",
+      "kdf_salt": "AAECAwQFBgcICQoLDA0ODw==",
+      "kdf_iterations": 600000,
+      "master_key": "7xdxRO7JQgy8EJPSqLNEqSvFBtDU7JwCjdGfgyTYweY=",
+      "wrap_key": "3d2Xc9TZL24wjcFYk+UtkGh5WTRkNYnrXBSX7BPceKM=",
+      "vault_key": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+      "wrap_nonce": "ZGVmZ2hpamtsbW5v",
+      "wrapped_key": "v1.ZGVmZ2hpamtsbW5v.uGHYS2e2USgf0O0hK/BrWQLMgPlLNhcxkh1zrPMD2InR9hNIUoec6keN6qZMOQVG"
+    },
+    {
+      "name": "unicode-nfc-600k",
+      "password": "pässwörd ñ 🔑 café",
+      "kdf": "pbkdf2-sha256",
+      "kdf_salt": "yMnKy8zNzs/Q0dLT1NXW1w==",
+      "kdf_iterations": 600000,
+      "master_key": "DpakmhvVGn+i3esIVHIYo5IeUT/T7IPjpfdsctR63qA=",
+      "wrap_key": "w0C+UTGvOm8by+9wI42ZQXKU+Zd3uXQHgMyahH6ifZo=",
+      "vault_key": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8=",
+      "wrap_nonce": "AQIDBAUGBwgJCgsM",
+      "wrapped_key": "v1.AQIDBAUGBwgJCgsM.NNBXtgCkSiEOFVxk4NICcWuIxWEs4O6ZxLF/e619vP5vJ9PM7SLGPHW49z5aF8iw"
+    }
+  ],
+  "vault_key": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+  "items": [
+    {
+      "id": "3b241101-e2bb-4255-8caf-4136c566a962",
+      "plaintext_json": "{\"type\":\"login\",\"name\":\"GitHub\",\"favorite\":true,\"notes\":\"work account — café\",\"login\":{\"username\":\"me@example.com\",\"password\":\"hunter2!é\",\"uris\":[{\"uri\":\"https://github.com/login\",\"match\":\"domain\"}],\"totp\":\"otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP&issuer=GitHub\"},\"x_future_field\":{\"keep\":[1,2,3]},\"created_at\":\"2026-10-26T12:00:00Z\",\"updated_at\":\"2026-10-26T12:00:00Z\"}",
+      "nonce": "FBUWFxgZGhscHR4f",
+      "data": "v1.FBUWFxgZGhscHR4f.XGPbxLJVv0qshg9Q63jATfoLgRf3kFYFKwQAHHZzcywWA0mAZGK3wCk3u2Myku8U4xVwesGIQ5JHPh6eOEofD0iwCgwOCUm9rBakvP3SLA+K3AznhMwIJxJuzSO0S1CfhQ59YcD6OAJuNzxDhbL9Fj94AxWxCt4rzp/Rw/3Po5yt5YY0L7RvIKTCrXtRKq5zt67tHF+uStt41/Ci3rKqKe0XuJMyQGjNVYHzV/oHbePw2ExB8qbsmmCzh2rUPaqQmIuHpmxQhdZipKOWKHdfiPbOR3eA0j/4bQRSfcabXRntZVyS/LztBxPdXMCvt1ZCfmsDZrp6ua7IQeN+BdVGDLnURwADhAdRM/rroFQGMkFAXS9xuTWT9H9MpltUtIPuifxcxIEOYqWFyYa8dh+gjRxWO6zO7BPRvAstKpjGZiFSRcSlxOaa+eKEIqcX0tMHpSnFmkJcvm5XUysLFmXY7qzq0N4wBgZ2FbdWnBFvBej6qX9wuVVZuHlG5RtqNZ3f5z/Qg+DXePc9ZGmlgRc="
+    },
+    {
+      "id": "8f0c2a4e-1d3b-4c5a-9e6f-7a8b9c0d1e2f",
+      "plaintext_json": "{\"type\":\"note\",\"name\":\"Wi-Fi\",\"notes\":\"SSID: home\\nKey: 🔐 secret\",\"favorite\":false}",
+      "nonce": "FRYXGBkaGxwdHh8g",
+      "data": "v1.FRYXGBkaGxwdHh8g.D66N86cCg5Wh14H8bJtGtaCeqD5fFCfPVbBL0f47Nc+Ony36AyBcckQ6JzlZw4lbXcbJIJwjZd7scU9Nsj5o0prek6wZQ2vcmxyyb/Dz4dE6+zZ0q38qTyv4U+JmNuSVmu3Fli/O"
+    }
+  ],
+  "folders": [
+    {
+      "id": "a1b2c3d4-0000-4000-8000-000000000001",
+      "name": "Work / Équipe",
+      "plaintext_json": "{\"name\":\"Work / Équipe\"}",
+      "nonce": "KCkqKywtLi8wMTIz",
+      "sealed": "v1.KCkqKywtLi8wMTIz.P/1kkfuqg0qpXWDKERF5sJXAGdz/GwgrnRC2vXSQhLnk6UTFzCTdTMs="
+    }
+  ],
+  "totp": [
+    {
+      "uri": "JBSWY3DPEHPK3PXP",
+      "time": 0,
+      "code": "282760"
+    },
+    {
+      "uri": "JBSWY3DPEHPK3PXP",
+      "time": 59,
+      "code": "996554"
+    },
+    {
+      "uri": "JBSWY3DPEHPK3PXP",
+      "time": 1111111109,
+      "code": "071271"
+    },
+    {
+      "uri": "JBSWY3DPEHPK3PXP",
+      "time": 1234567890,
+      "code": "742275"
+    },
+    {
+      "uri": "JBSWY3DPEHPK3PXP",
+      "time": 2000000000,
+      "code": "890699"
+    },
+    {
+      "uri": "JBSWY3DPEHPK3PXP",
+      "time": 1761480000,
+      "code": "474117"
+    },
+    {
+      "uri": "otpauth://totp/Ex:me?secret=AEBAGBAFAYDQQCIKBMGA2DQPCAIREEYUCULBOGAZDINRYHI6D4QA&algorithm=SHA256&digits=8&period=60",
+      "time": 59,
+      "code": "76973896"
+    },
+    {
+      "uri": "otpauth://totp/Ex:me?secret=AEBAGBAFAYDQQCIKBMGA2DQPCAIREEYUCULBOGAZDINRYHI6D4QA&algorithm=SHA256&digits=8&period=60",
+      "time": 1700000000,
+      "code": "38707941"
+    },
+    {
+      "uri": "otpauth://totp/Ex:me?secret=aaaqeayeaudaocajbifqydiob4ibceqtcqkrmfyydenbwha5dypsaijcemsckjrhfausukzmfuxc6mbrgiztinjwg44dsor3hq6t4py&algorithm=SHA512&digits=7",
+      "time": 1234567890,
+      "code": "8000099"
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+# Continuous integration for ludworks-browser.
+#
+# Supply chain: actions are pinned to full commit SHAs (resolved with
+# `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`; the trailing comment names the tag). The
+# only third-party code CI runs is the Python `cryptography` package for the independent crypto
+# cross-check; it is hash-pinned (.github/requirements/vectors-requirements.txt) and runs in its
+# own job, so nothing from PyPI ever runs in the job that builds and uploads the extension zips.
+# Dependabot (.github/dependabot.yml) proposes updates; .github/check-supply-chain.mjs enforces
+# these rules.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  crypto-vectors:
+    name: Crypto vectors vs the Python reference
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python (independent crypto cross-check)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Install Python cryptography (test-only, hash-pinned; the extension has no dependencies)
+        run: |
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r .github/requirements/vectors-requirements.txt
+
+      - name: Committed crypto vectors match the Python reference
+        run: |
+          python3 -I -c "import cryptography; print('cryptography', cryptography.__version__)"
+          python3 -I scripts/vectors/make_vectors.py generate > "$RUNNER_TEMP/vectors.json"
+          diff -u tests/fixtures/crypto-vectors.json "$RUNNER_TEMP/vectors.json"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Python cryptography verifies the JS crypto output
+        # The same test file runs in build-test too, where this cross-check is skipped
+        # because no Python packages are installed there.
+        run: node --test tests/vault-crypto.test.mjs
+
+  build-test:
+    name: Test, build and package (Chrome + Firefox)
+    needs: crypto-vectors
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: CI supply-chain rules
+        run: node .github/check-supply-chain.mjs
+
+      - name: Committed icons are up to date
+        run: node scripts/make-icons.mjs --check
+
+      - name: Unit tests
+        run: node --test "tests/*.test.mjs"
+
+      - name: Build both browsers
+        run: node build.mjs
+
+      - name: Verify packages
+        # The runner's system Python, standard library only.
+        run: |
+          for z in dist/*.zip; do python3 -I -m zipfile -t "$z"; done
+          ls -l dist/*.zip
+
+      - name: Upload packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludworks-passwords-${{ github.sha }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,19 @@
+{
+  "name": "ludworks-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ludworks Passwords: end-to-end encrypted password manager extension for Chrome and Firefox (zero runtime dependencies).",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "check:icons": "node scripts/make-icons.mjs --check",
+    "test": "node --test \"tests/*.test.mjs\"",
+    "test:integration": "node --test --test-concurrency=1 \"tests/integration/*.test.mjs\"",
+    "vectors": "python3 -I scripts/vectors/make_vectors.py generate > tests/fixtures/crypto-vectors.json"
+  }
+}
