@@ -1,6 +1,6 @@
 {
   "name": "ludworks-browser",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Ludworks Passwords: end-to-end encrypted password manager extension for Chrome and Firefox (zero runtime dependencies).",
   "type": "module",
