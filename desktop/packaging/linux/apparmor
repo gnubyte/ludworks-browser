@@ -1,0 +1,10 @@
+# Ludworks Browser: allow Chromium's user-namespace sandbox (Ubuntu 24.04+ restricts unprivileged
+# user namespaces to binaries with a profile like this one; same approach as Chrome's package).
+abi <abi/4.0>,
+include <tunables/global>
+
+profile ludworks-browser /opt/ludworks-browser/ludworks-browser flags=(unconfined) {
+  userns,
+
+  include if exists <local/ludworks-browser>
+}

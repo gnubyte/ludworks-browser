@@ -1,3 +1,14 @@
+# Ludworks browser repository
+
+Two products share this repository and its vault libraries (`src/lib/`):
+
+* **Ludworks Browser** — a full Chromium browser for Windows, macOS and Linux that signs in to Ludworks and syncs
+  passwords, passkeys, bookmarks, history, open tabs and settings (end-to-end encrypted), with Bitwarden
+  import/export. See **[desktop/README.md](desktop/README.md)**. (Android: `ludworks-android`, module `:browser`.)
+* **Ludworks Passwords** — the password-manager extension for Chrome and Firefox, documented below.
+
+---
+
 # Ludworks Passwords — browser extension
 
 The password-manager extension for **Ludworks**, the self-hosted, security-first NAS "multitool".
