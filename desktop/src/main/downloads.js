@@ -158,8 +158,13 @@ export class Downloads extends EventEmitter {
   }
 
   clear() {
-    this.db.run("DELETE FROM downloads WHERE state <> 'progressing'");
-    this.recentPrivate = [];
+    this.clearSince(0);
+  }
+
+  /** Forgets finished downloads started at or after `since` (ms; 0 = all). Files stay on disk. */
+  clearSince(since = 0) {
+    this.db.run("DELETE FROM downloads WHERE state <> 'progressing' AND started_at >= ?", since);
+    this.recentPrivate = (this.recentPrivate || []).filter((r) => r.started_at < since);
     this.emit('change', {});
   }
 }

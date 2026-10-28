@@ -1,5 +1,6 @@
 // Settings.
 import { h, clear, applyTheme, sideNav, toggle } from './ui.js';
+import { blockerSection } from './settings-blocker.js';
 
 const app = document.getElementById('app');
 const main = h('main', { class: 'main' });
@@ -46,7 +47,7 @@ async function render() {
   const homepage = h('input', { class: 'input', value: prefs.homepage, style: { width: '320px' } });
   homepage.addEventListener('change', () => set({ homepage: homepage.value.trim() || 'ludworks://newtab/' }));
 
-  const clearRange = select([['3600000', 'Last hour'], ['86400000', 'Last 24 hours'], ['604800000', 'Last 7 days'], ['0', 'All time']], '0', () => {});
+  const clearRange = select([['3600000', 'Last hour'], ['86400000', 'Last 24 hours'], ['172800000', 'Last 48 hours'], ['259200000', 'Last 72 hours'], ['604800000', 'Last 7 days'], ['0', 'All time']], '0', () => {});
   const what = { history: h('input', { type: 'checkbox', checked: true }), cookies: h('input', { type: 'checkbox', checked: true }), cache: h('input', { type: 'checkbox', checked: true }), downloads: h('input', { type: 'checkbox' }), permissions: h('input', { type: 'checkbox' }) };
   const label = (cb, t) => h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, cb, t);
   const clearBtn = h('button', { class: 'btn danger' }, 'Clear data');
@@ -112,9 +113,23 @@ async function render() {
       'privacy',
       'Privacy and security',
       setting('Send Global Privacy Control', 'Tells websites not to sell or share your data (Sec-GPC header).', toggle(prefs.sendGpc, (v) => set({ sendGpc: v }))),
+      setting('Block third-party cookies', 'Stops sites embedded in pages (ad and analytics networks) from reading or setting cookies. A few sign-in widgets and embeds may stop working.', toggle(prefs.blockThirdPartyCookies, (v) => set({ blockThirdPartyCookies: v }))),
+      setting('Show the tracking-cookie button', 'Counts the sites on a page that follow you from site to site, and wipes their cookies.', toggle(prefs.trackerButton, (v) => set({ trackerButton: v }))),
+      setting('Show the clear-history button', 'One click to clear the last hour, 24, 48 or 72 hours, 7 days or everything.', toggle(prefs.clearHistoryButton, (v) => set({ clearHistoryButton: v }))),
+      setting(
+        'Cross-site trackers',
+        'Every site seen following you so far.',
+        h(
+          'div',
+          { style: { display: 'flex', gap: '8px' } },
+          h('button', { class: 'btn', onclick: async (e) => { const b = e.currentTarget; const r = await call('privacy.wipe'); b.textContent = r.ok ? `Deleted ${r.value.removed} cookies` : r.error.message; } }, 'Wipe their cookies'),
+          h('button', { class: 'btn', onclick: async (e) => { const b = e.currentTarget; const r = await call('privacy.forget'); b.textContent = r.ok ? 'Forgotten' : r.error.message; } }, 'Forget the list'),
+        ),
+      ),
       setting('Spell check', null, toggle(prefs.spellcheck, (v) => set({ spellcheck: v }))),
       h('div', { class: 'setting', style: { flexWrap: 'wrap' } }, h('div', { class: 'grow' }, h('div', {}, 'Clear browsing data'), h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px' } }, label(what.history, 'History'), label(what.cookies, 'Cookies and site data'), label(what.cache, 'Cached files'), label(what.downloads, 'Download list'), label(what.permissions, 'Site permissions'))), clearRange, clearBtn),
     ),
+    ...blockerSection(call),
     h('h2', { id: 'sites' }, 'Site permissions'),
     h('div', { class: 'card' }, permList),
     ...section(

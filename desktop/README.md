@@ -19,7 +19,7 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
 
 * Tabs (pinning, drag to reorder, mute, reopen closed), private windows (separate in-memory session), session restore,
   address bar with history/bookmark/open-tab/search suggestions (Google, DuckDuckGo, Bing, Brave, Startpage, Ecosia,
-  Kagi or custom), bookmarks bar and manager, history (90 days, searchable), downloads (dangerous-type warnings),
+  Kagi or custom), history (90 days, searchable), downloads (dangerous-type warnings),
   find in page, zoom (remembered per site), print, save page, PDF viewer, picture-in-picture, dev tools, spell check,
   per-site permissions (camera, mic, location, notifications, screen sharing picker, external apps), certificate
   error interstitials, HTTP auth, light/dark themes, Windows 11 snap layouts / native title-bar buttons.
@@ -37,9 +37,26 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   Windows Hello / security keys. Passkeys sync to every device and to Bitwarden-compatible exports.
 * **Browser sync** (`API.md` §16): bookmarks, history, open tabs ("tabs from your other devices") and settings, sealed
   with keys derived from your vault key; the server only stores ciphertext.
-* **Import**: Bitwarden (JSON, password-protected JSON with PBKDF2 or Argon2id, CSV), KeePass (.kdbx, XML),
-  Chrome/Edge/Firefox password CSV; bookmarks + history straight from Edge/Chrome/Brave/Vivaldi, bookmark HTML files.
-  **Export**: Bitwarden JSON (password-protected recommended), Bitwarden CSV, KeePass .kdbx; bookmarks HTML.
+* **Bookmarks**: two-pane manager (folder tree + contents, search, drag and drop of bookmarks and folders, Shift/Ctrl
+  multi-select, cut/copy/paste, undo, bulk move); bookmarks bar with drag to reorder or into folders, drop links to add,
+  right-click menu (edit, delete, open in new tab/window/private window) and an overflow menu.
+* **Content blocker** (`src/main/blocker/`): our own engine for the Adblock Plus / uBlock Origin filter syntax (network
+  filters, element hiding incl. procedural, a clean-room set of scriptlets) running uBlock's default lists, EasyList,
+  EasyPrivacy, Peter Lowe's and URLhaus (downloaded and updated at runtime, compiled in a worker, cached). Shield button
+  with the per-page count, what was blocked, a per-site switch and an element picker; lists, own filters and the
+  allowlist in Settings. No uBlock Origin code is used (it is GPL; this app is proprietary).
+* **Privacy buttons** (`src/main/privacy/`): a cookie button counting third-party sites on the page that have followed
+  you from other sites (cookies seen under two or more sites), listing them and wiping their cookies, with an optional
+  "block all third-party cookies"; an eraser button that clears the last hour / 24 / 48 / 72 hours / 7 days / all
+  history (deletions sync), optionally downloads list, cache and cookies.
+* **Import**: Bitwarden at full fidelity — JSON (individual and organization), password-protected JSON (PBKDF2 or
+  Argon2id), .zip with attachments, CSV — keeping TOTP keys, passkeys, custom fields (incl. linked), password history,
+  cards, identities, SSH keys and Bitwarden's newer item types, with a preview, duplicate handling and progress;
+  KeePass (.kdbx, XML), Chrome/Edge/Firefox password CSV; bookmarks + history straight from Edge, Chrome, Brave,
+  Vivaldi, Opera, Arc, Chromium, Yandex, Firefox, LibreWolf, Waterfox and Zen (every profile), bookmark HTML files.
+  **Export**: Bitwarden JSON (password-protected recommended, round-trips everything above), Bitwarden CSV, KeePass
+  .kdbx; bookmarks HTML.
+* Main-process warnings and errors are kept in `<profile>/logs/main.log` (1 MB, rotated) — attach it to bug reports.
 
 ## Layout
 
@@ -49,8 +66,10 @@ desktop/
   build.mjs               stage | fetch | package | installer | linux-packages | all   (Node built-ins only)
   src/main/               main process: browser.js (windows, commands, IPC), window.js, tab.js, protocols.js,
                           account/ (sign-in, vault, browser sync, TLS pinning), autofill.js, passkeys.js, cbor.js,
-                          import/ (Bitwarden/KeePass/CSV, other browsers), install-win.js, profile/ (SQLite stores)
-  src/preload/            shell.cjs (browser UI), content-base.cjs + features/ (autofill, WebAuthn shim → bundled)
+                          import/ (Bitwarden/KeePass/CSV, other browsers), blocker/ (content blocker),
+                          privacy/ (tracking cookies, clear history), webrequest.js (one webRequest dispatcher per
+                          session), install-win.js, profile/ (SQLite stores)
+  src/preload/            shell.cjs (browser UI), content-base.cjs + features/ (blocker, autofill, WebAuthn shim)
   src/shell/              tab strip/toolbar, popup overlay, error panel (lwshell://)
   src/pages/              ludworks:// pages: newtab, welcome, settings, passwords, bookmarks, history, downloads, sync, about
   src/vendor/vault/       verbatim copy of the web app's vault import/export library (check-vendor.mjs)

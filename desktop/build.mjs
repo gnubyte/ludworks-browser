@@ -348,7 +348,7 @@ export function linuxPackages(target) {
 async function main() {
   const cmd = process.argv[2] || 'stage';
   const target = arg('target', defaultTarget());
-  if (cmd === 'stage') console.log(await stage());
+  if (cmd === 'stage') console.log(await stage(arg('out', '') ? path.resolve(arg('out', '')) : undefined));
   else if (cmd === 'fetch') console.log(await fetchEngine(target));
   else if (cmd === 'tools') buildTools();
   else if (cmd === 'package') await packageTarget(target);

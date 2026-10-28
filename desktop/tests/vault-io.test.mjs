@@ -60,7 +60,8 @@ test('Bitwarden JSON import keeps passkeys, skips trash and unreadable passkeys'
   assert.equal(p1.discoverable, true);
   assert.equal(p1.algorithm, -7);
   assert.equal(p2.discoverable, false);
-  assert.ok(r.warnings.some((w) => /passkey that could not be read/.test(w)));
+  assert.ok(r.warnings.some((w) => /a passkey could not be used because its credential id is not readable/.test(w)));
+  assert.equal(gh.fields.filter((f) => f.bitwarden === 'login.fido2Credential').length, 1, 'the unreadable passkey is kept (hidden field) for export');
   assert.ok(!r.warnings.some((w) => /cannot be transferred/.test(w)));
 });
 
@@ -83,7 +84,7 @@ test('export → import round trip (unencrypted and password-protected) keeps pa
     assert.equal(gh.login.password, 'pw-1');
     assert.equal(back.items.find((i) => i.type === 'card').card.number, '4111111111111111');
   }
-  await assert.rejects(parseImport(Buffer.from(await serializeExport('bitwarden-json-protected', data, { password: 'right' })), { password: 'wrong' }), /wrong export password|bad_password/);
+  await assert.rejects(parseImport(Buffer.from(await serializeExport('bitwarden-json-protected', data, { password: 'right' })), { password: 'wrong' }), /wrong (export|file) password|bad_password/i);
 });
 
 test('Bitwarden CSV round trip', async () => {

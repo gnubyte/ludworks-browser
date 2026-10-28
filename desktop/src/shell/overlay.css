@@ -70,3 +70,18 @@ form.stack { padding: 6px 16px 4px; }
 .notice.warn { background: var(--danger-soft); color: var(--danger); }
 .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; word-break: break-all; }
 .pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 600; }
+
+/* privacy popups (tracking cookies, clear history) */
+.privacy .head .grow { min-width: 0; }
+.pv-ic { width: 32px; height: 32px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.pv-list { max-height: 320px; overflow: auto; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.pv-row .s { white-space: normal; }
+.pv-row .icon-btn { opacity: 0.55; }
+.pv-row:hover .icon-btn { opacity: 1; }
+.pv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.pv-dot.warn { background: var(--danger); }
+.pv-blocked { color: var(--accent); }
+.pv-foot { padding-top: 10px; }
+.pv-done { padding-top: 0; }
+.pv-range .t { font-weight: 550; }
+.btn.small { height: 26px; padding: 0 10px; font-size: 12px; }

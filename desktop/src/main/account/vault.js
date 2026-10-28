@@ -409,14 +409,17 @@ export class VaultStore extends EventEmitter {
       }
       throw e;
     }
+    let dec = null;
     if (validVI(vi)) {
       this.putCache(vi);
       const marks = this.marksFor(this.keyId);
-      const dec = await vc.decryptItem(key, vi.id, vi.data);
+      dec = await vc.decryptItem(key, vi.id, vi.data);
       marks.items[vi.id] = { seq: dec.seq || 0, updated_at: vi.updated_at, hash: sha(vi.data) };
       this.saveMarks();
     }
-    this.items = null;
+    // keep the decrypted list warm (the item we just wrote) instead of re-decrypting the whole vault next time
+    if (this.items && dec) this.items.set(vi.id, { vi: cleanVI(vi), data: dec, error: null, stale: null });
+    else this.items = null;
     this.emit('items');
     return { id: vi.id, revision: vi.revision };
   }
@@ -448,9 +451,10 @@ export class VaultStore extends EventEmitter {
   /**
    * Import many new items at once (POST /vault/items/batch, ≤ 1000 per request).
    * @param {Array<{data: object, folderId?: string|null}>} entries
+   * @param {{onProgress?: (done: number, total: number) => void}} [opts]
    * @returns {Promise<{created: number, errors: Array<{id: string, error: string}>}>}
    */
-  async importBatch(acc, entries) {
+  async importBatch(acc, entries, { onProgress } = {}) {
     await this.refreshMeta(acc);
     const key = this.requireKey();
     const stamp = new Date(this.now()).toISOString();
@@ -474,18 +478,20 @@ export class VaultStore extends EventEmitter {
       const res = await this.apiFn().request('POST', '/vault/items/batch', { body: { items, key_id: this.keyId } });
       created += Number(res && res.created) || 0;
       for (const x of (res && res.errors) || []) errors.push({ id: String(x.id || ''), error: String(x.error || 'error') });
+      if (onProgress) onProgress(Math.min(i + chunk.length, entries.length), entries.length);
     }
     await this.sync(acc);
     return { created, errors };
   }
 
   // ------------------------------------------------------------------------------- folders
-  async createFolder(acc, name) {
+  /** @param {{sync?: boolean}} [opts] sync:false skips the sync (imports create many folders, then sync once) */
+  async createFolder(acc, name, { sync = true } = {}) {
     await this.refreshMeta(acc);
     const key = this.requireKey();
     const id = vc.uuid();
     await this.apiFn().request('POST', '/vault/folders', { body: { id, name: await vc.encryptFolder(key, id, String(name).slice(0, 500)), key_id: this.keyId } });
-    await this.sync(acc);
+    if (sync) await this.sync(acc);
     return id;
   }
 
