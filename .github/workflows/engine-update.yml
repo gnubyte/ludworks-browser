@@ -1,0 +1,50 @@
+# Weekly check for browser-engine security updates: when castlabs publishes a newer Electron for
+# Content Security build (Chromium security fixes + Widevine) for the pinned major, open a pull request
+# that re-pins desktop/electron.lock.json. The Desktop browser workflow then tests and packages it.
+name: Browser engine updates
+
+on:
+  schedule:
+    - cron: '17 6 * * 1,4'
+  workflow_dispatch:
+    inputs:
+      major:
+        description: 'Allow moving to a newer Chromium milestone (Electron major)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Re-pin the engine
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node desktop/scripts/bump-electron.mjs ${{ inputs.major && '--major' || '' }}
+      - name: Open a pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git diff --quiet -- desktop/electron.lock.json && { echo "engine is current"; exit 0; }
+          ver="$(node -p "require('./desktop/electron.lock.json').version")"
+          branch="engine/${ver//+/-}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "Browser engine security update: castlabs Electron ${ver}"
+          git push -u origin "$branch"
+          gh pr create --title "Browser engine security update: ${ver}" --body "Re-pins desktop/electron.lock.json to castlabs Electron for Content Security ${ver} (Chromium security fixes). SHA-256 sums come from the release's SHASUMS256.txt. Merge after the Desktop browser workflow passes, then ship the new installers."

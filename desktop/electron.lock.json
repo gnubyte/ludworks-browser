@@ -1,0 +1,15 @@
+{
+  "comment": "Pinned browser engine: castlabs 'Electron for Content Security' (Chromium + Widevine CDM support). Update with: node desktop/scripts/bump-electron.mjs [--version=X.Y.Z+wvcus]",
+  "flavor": "castlabs-ecs",
+  "version": "44.9.3+wvcus",
+  "release": "https://github.com/castlabs/electron-releases/releases/tag/v44.9.3%2Bwvcus",
+  "baseUrl": "https://github.com/castlabs/electron-releases/releases/download/v44.9.3%2Bwvcus/",
+  "assets": {
+    "win32-x64": { "file": "electron-v44.9.3+wvcus-win32-x64.zip", "sha256": "1ab1e5aa4566f218873d272af1a57c6162ad83911a69bbd4b0e341c37c6c40fc" },
+    "win32-arm64": { "file": "electron-v44.9.3+wvcus-win32-arm64.zip", "sha256": "e6f47d0e96ba85d785d79a54f6f88adc938c1fa3579752dfaf99bce9dc34cca8" },
+    "darwin-x64": { "file": "electron-v44.9.3+wvcus-darwin-x64.zip", "sha256": "99ca1b2c3bb295d7927ef8d17137952385844d67f63dbe827a7214aecca181fe" },
+    "darwin-arm64": { "file": "electron-v44.9.3+wvcus-darwin-arm64.zip", "sha256": "3f49f11710e87974b6b7c7acb2c172c1f37c804f319f7c887e0a791bbda8dc6b" },
+    "linux-x64": { "file": "electron-v44.9.3+wvcus-linux-x64.zip", "sha256": "80cb5218ab814597282ebe41d16fb5a98abb0c75370e9195914e40e097359fad" },
+    "linux-arm64": { "file": "electron-v44.9.3+wvcus-linux-arm64.zip", "sha256": "e6f867e6575bf92184032d7f04f1fe104952c89dbcbd6ecebcd99ced6395eab5" }
+  }
+}
