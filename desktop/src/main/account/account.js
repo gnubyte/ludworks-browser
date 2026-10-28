@@ -104,9 +104,11 @@ export class Account {
   changed() {
     clearTimeout(this.changeTimer);
     this.changeTimer = setTimeout(() => {
+      // Runs late: windows and tabs may have closed (or the app be quitting) since the change.
+      if (this.b.quitting) return;
       this.b.broadcastShared();
       this.b.forEachWindow((w) => {
-        if (w.popup && w.popup.kind === 'account' && w.overlay) w.overlay.webContents.send('popup-data', { kind: 'account', data: this.summary() });
+        if (w.popup && w.popup.kind === 'account' && w.overlay && !w.overlay.webContents.isDestroyed()) w.overlay.webContents.send('popup-data', { kind: 'account', data: this.summary() });
       });
       for (const t of this.b.allTabs()) {
         if (/^ludworks:\/\/(passwords|sync|newtab|welcome)\//.test(t.wc.getURL())) t.wc.send('page-event', { type: 'account', summary: this.summary() });
@@ -158,6 +160,8 @@ export class Account {
 
   stop() {
     for (const t of this.timers) clearInterval(t);
+    clearTimeout(this.changeTimer);
+    clearTimeout(this.syncTimer);
   }
 
   onPrefsChange(keys) {

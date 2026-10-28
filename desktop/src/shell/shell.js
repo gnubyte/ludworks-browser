@@ -228,6 +228,40 @@ function renderToolbar() {
   }
 }
 
+// Buttons contributed by feature modules (Browser.registerFeature): icon, optional count badge, popup.
+function renderFeatureButtons() {
+  const box = $('feature-buttons');
+  const buttons = state.toolbarButtons || [];
+  const key = JSON.stringify(buttons);
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  clear(box);
+  for (const b of buttons) {
+    const btn = h('button', { class: `icon-btn feature ${b.pressed ? 'on' : ''} ${b.tone ? `tone-${b.tone}` : ''}`, title: b.title || '', 'aria-label': b.title || b.id, dataset: { id: b.id } }, icon(b.icon, { size: 18 }));
+    if (b.badge !== undefined && b.badge !== null && b.badge !== '' && b.badge !== 0) btn.append(h('span', { class: 'count' }, String(b.badge)));
+    if (b.popup) btn.addEventListener('click', () => call('popup.open', { kind: b.popup.kind, anchor: anchorOf(btn, { align: 'right', width: b.popup.width || 340 }) }));
+    box.append(btn);
+  }
+}
+
+// ---------------------------------------------------------------------------- bookmarks bar
+// HTML5 drag and drop: drag items to reorder them, onto a folder to move them in (hovering opens
+// the folder's menu, which takes drops too), drag links from pages, the address-bar text or the
+// site chip in to bookmark them at that spot, and drag items out as links. Right-click / Delete /
+// F2 go to the main process (native context menu, edit popup). Items that don't fit go into a »
+// menu.
+const BM_DND = 'application/x-ludworks-bookmark';
+const BM_TITLE = 'application/x-ludworks-title';
+const bmBar = { icons: {}, iconsVersion: null, iconsLoaded: 0, overflowAt: -1, drag: null, stale: false, hover: { key: null, timer: null }, popupByDrag: false };
+
+function bmHost(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
 function renderBookmarksBar() {
   const bar = $('bookmarks-bar');
   const items = state.bookmarksBar;
@@ -235,26 +269,240 @@ function renderBookmarksBar() {
   bar.hidden = !show;
   $('chrome').classList.toggle('no-bar', !show);
   if (!show) return;
-  const key = JSON.stringify(items);
+  if (state.bookmarkIcons !== bmBar.iconsVersion) {
+    bmBar.iconsVersion = state.bookmarkIcons;
+    window.lw.call('bookmark.icons').then((m) => {
+      bmBar.icons = m || {};
+      bmBar.iconsLoaded++;
+      renderBookmarksBar();
+    }, () => {});
+  }
+  const key = JSON.stringify([items, bmBar.iconsLoaded]);
   if (bar.dataset.key === key) return;
-  bar.dataset.key = key;
-  clear(bar);
-  if (!items.length) {
-    bar.append(h('span', { class: 'empty' }, 'Bookmarks you add to the bar appear here. Press Ctrl+D to bookmark a page.'));
+  if (bmBar.drag) {
+    bmBar.stale = true; // re-drawing now would cancel the drag in progress
     return;
   }
-  for (const b of items) {
-    const btn = h('button', { class: 'bm', title: b.type === 'url' ? `${b.title}\n${b.url}` : b.title }, b.type === 'folder' ? icon('folder', { size: 15 }) : faviconEl(null, b.title || b.url, 15), h('span', { class: 't' }, b.title || b.url || 'Untitled'));
-    btn.addEventListener('click', (e) => {
-      if (b.type === 'folder') call('bookmark.folder', { id: b.id, anchor: anchorOf(btn, { width: 280 }) });
-      else call('bookmark.open', { id: b.id, disposition: e.ctrlKey || e.metaKey ? 'background-tab' : e.shiftKey ? 'new-window' : 'current' });
-    });
-    btn.addEventListener('auxclick', (e) => {
-      if (e.button === 1 && b.type === 'url') call('bookmark.open', { id: b.id, disposition: 'background-tab' });
-    });
-    bar.append(btn);
+  bar.dataset.key = key;
+  clear(bar);
+  const list = h('div', { class: 'bm-items', role: 'toolbar', 'aria-label': 'Bookmarks' });
+  if (!items.length) list.append(h('span', { class: 'empty' }, `Drag links here, or press ${window.lw.platform === 'darwin' ? '⌘' : 'Ctrl+'}D to bookmark a page.`));
+  for (const b of items) list.append(barButton(b));
+  const more = h('button', { class: 'bm-more', title: 'More bookmarks', 'aria-label': 'More bookmarks', hidden: true }, icon('chevrons', { size: 15 }));
+  more.addEventListener('click', () => call('bookmark.folder', { id: 'toolbar', start: bmBar.overflowAt, anchor: anchorOf(more, { align: 'right', width: 300 }) }));
+  bar.append(list, more, h('div', { class: 'bm-drop', hidden: true }));
+  layoutBookmarksBar();
+}
+
+function barButton(b) {
+  const btn = h(
+    'button',
+    { class: `bm${b.type === 'folder' ? ' folder' : ''}`, draggable: 'true', dataset: { id: b.id }, title: b.type === 'url' ? `${b.title || ''}\n${b.url}` : b.title || 'Folder' },
+    b.type === 'folder' ? icon('folder', { size: 15 }) : faviconEl(bmBar.icons[bmHost(b.url)] || null, b.title || b.url, 15),
+    h('span', { class: 't' }, b.title || (b.type === 'url' ? b.url : 'Folder')),
+  );
+  const menu = () => call('bookmark.menu', { id: b.id, anchor: anchorOf(btn, { width: 340 }) });
+  btn.addEventListener('click', (e) => {
+    if (b.type === 'folder') call('bookmark.folder', { id: b.id, anchor: anchorOf(btn, { width: 300 }) });
+    else call('bookmark.open', { id: b.id, disposition: e.ctrlKey || e.metaKey ? 'background-tab' : e.shiftKey ? 'new-window' : 'current' });
+  });
+  btn.addEventListener('auxclick', (e) => {
+    if (e.button === 1 && b.type === 'url') call('bookmark.open', { id: b.id, disposition: 'background-tab' });
+  });
+  btn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    menu();
+  });
+  btn.addEventListener('keydown', (e) => {
+    if (e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) call('bookmark.remove', { id: b.id });
+    else if (e.key === 'F2') call('bookmark.edit', { id: b.id, anchor: anchorOf(btn, { width: 340 }) });
+    else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) menu();
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      const all = [...$('bookmarks-bar').querySelectorAll('.bm:not(.over), .bm-more:not([hidden])')];
+      const next = all[all.indexOf(btn) + (e.key === 'ArrowRight' ? 1 : -1)];
+      if (next) next.focus();
+    } else return;
+    e.preventDefault();
+  });
+  btn.addEventListener('dragstart', (e) => {
+    bmBar.drag = { id: b.id };
+    e.dataTransfer.effectAllowed = 'copyMove';
+    e.dataTransfer.setData(BM_DND, JSON.stringify({ ids: [b.id] }));
+    if (b.url) {
+      e.dataTransfer.setData('text/uri-list', b.url);
+      e.dataTransfer.setData('text/plain', b.url);
+      e.dataTransfer.setData(BM_TITLE, b.title || '');
+    }
+    btn.classList.add('dragging');
+  });
+  btn.addEventListener('dragend', endBarDrag);
+  return btn;
+}
+
+function endBarDrag() {
+  for (const el of $('bookmarks-bar').querySelectorAll('.bm.dragging')) el.classList.remove('dragging');
+  bmBar.drag = null;
+  clearBarDrop();
+  if (bmBar.popupByDrag) {
+    bmBar.popupByDrag = false;
+    call('popup.close', { kind: 'bookmark-folder' });
+  }
+  if (bmBar.stale) {
+    bmBar.stale = false;
+    renderBookmarksBar();
   }
 }
+// A drag can end without a dragend reaching the source (e.g. dropped in another view): settle on the next move.
+window.addEventListener('mousemove', (e) => {
+  if (bmBar.drag && e.buttons === 0) endBarDrag();
+});
+
+/** Hides the items that don't fit behind the » button. */
+function layoutBookmarksBar() {
+  const bar = $('bookmarks-bar');
+  const list = bar.querySelector('.bm-items');
+  const more = bar.querySelector('.bm-more');
+  if (!list || bar.hidden) return;
+  const btns = [...list.querySelectorAll('.bm')];
+  for (const b of btns) b.classList.remove('over');
+  more.hidden = true;
+  bmBar.overflowAt = -1;
+  const fits = () => btns.findIndex((b) => b.offsetLeft + b.offsetWidth > list.clientWidth + 1);
+  if (!btns.length || fits() < 0) return;
+  more.hidden = false; // the » button takes some room itself
+  const at = fits();
+  if (at < 0) {
+    more.hidden = true;
+    return;
+  }
+  for (let j = at; j < btns.length; j++) btns[j].classList.add('over');
+  bmBar.overflowAt = at;
+}
+new ResizeObserver(() => layoutBookmarksBar()).observe($('bookmarks-bar'));
+
+/** Where a drag over the bar would land: {kind: 'into', id} a folder, {kind: 'more'}, or {kind: 'line', before, x}. */
+function barTarget(e) {
+  const types = [...e.dataTransfer.types];
+  if (!types.includes(BM_DND) && !types.includes('text/uri-list') && !types.includes('text/plain')) return null;
+  const bar = $('bookmarks-bar');
+  if (e.target.closest && e.target.closest('.bm-more')) return { kind: 'more' };
+  const btns = [...bar.querySelectorAll('.bm-items .bm:not(.over)')];
+  const base = bar.getBoundingClientRect().left;
+  for (let i = 0; i < btns.length; i++) {
+    const r = btns[i].getBoundingClientRect();
+    const id = btns[i].dataset.id;
+    if (e.clientX >= r.left && e.clientX <= r.right && btns[i].classList.contains('folder') && !(bmBar.drag && bmBar.drag.id === id)) {
+      const f = (e.clientX - r.left) / r.width;
+      if (f > 0.22 && f < 0.78) return { kind: 'into', id, btn: btns[i] };
+    }
+    if (e.clientX < r.left + r.width / 2) return { kind: 'line', before: id, x: r.left - base - 1 };
+  }
+  const items = state.bookmarksBar || [];
+  const last = btns[btns.length - 1];
+  return { kind: 'line', before: bmBar.overflowAt >= 0 && items[bmBar.overflowAt] ? items[bmBar.overflowAt].id : null, x: last ? last.getBoundingClientRect().right - base + 1 : 10 };
+}
+
+function clearBarDrop() {
+  const bar = $('bookmarks-bar');
+  const line = bar.querySelector('.bm-drop');
+  if (line) line.hidden = true;
+  bar.classList.remove('drop-empty');
+  for (const el of bar.querySelectorAll('.drop-into')) el.classList.remove('drop-into');
+  clearTimeout(bmBar.hover.timer);
+  bmBar.hover.key = null;
+}
+
+/** Hovering a drag over a folder (or ») for a moment opens its menu, which accepts the drop too. */
+function hoverOpen(t) {
+  const key = t.kind === 'more' ? 'more' : t.id;
+  if (bmBar.hover.key === key) return;
+  clearTimeout(bmBar.hover.timer);
+  bmBar.hover.key = key;
+  bmBar.hover.timer = setTimeout(() => {
+    const bar = $('bookmarks-bar');
+    const anchorEl = t.kind === 'more' ? bar.querySelector('.bm-more') : t.btn;
+    if (!anchorEl || !anchorEl.isConnected) return;
+    bmBar.popupByDrag = true;
+    call('bookmark.folder', { id: t.kind === 'more' ? 'toolbar' : t.id, start: t.kind === 'more' ? bmBar.overflowAt : 0, drag: true, anchor: anchorOf(anchorEl, { align: t.kind === 'more' ? 'right' : 'left', width: 300 }) });
+  }, 550);
+}
+
+$('bookmarks-bar').addEventListener('dragover', (e) => {
+  const t = barTarget(e);
+  const bar = $('bookmarks-bar');
+  for (const el of bar.querySelectorAll('.drop-into')) el.classList.remove('drop-into');
+  const line = bar.querySelector('.bm-drop');
+  if (line) line.hidden = true;
+  if (!t) return;
+  e.preventDefault();
+  const own = [...e.dataTransfer.types].includes(BM_DND);
+  const allowed = e.dataTransfer.effectAllowed;
+  e.dataTransfer.dropEffect = own ? 'move' : /copy|all|uninitialized/i.test(allowed) ? 'copy' : 'link';
+  if (t.kind === 'into' || t.kind === 'more') {
+    (t.kind === 'more' ? bar.querySelector('.bm-more') : t.btn).classList.add('drop-into');
+    hoverOpen(t);
+    return;
+  }
+  clearTimeout(bmBar.hover.timer);
+  bmBar.hover.key = null;
+  if (!(state.bookmarksBar || []).length) bar.classList.add('drop-empty');
+  else if (line) {
+    line.hidden = false;
+    line.style.left = `${Math.round(t.x)}px`;
+  }
+});
+$('bookmarks-bar').addEventListener('dragleave', (e) => {
+  if (!$('bookmarks-bar').contains(e.relatedTarget)) clearBarDrop();
+});
+$('bookmarks-bar').addEventListener('drop', (e) => {
+  const t = barTarget(e);
+  clearBarDrop();
+  if (!t || t.kind === 'more') return;
+  e.preventDefault();
+  const parent = t.kind === 'into' ? t.id : 'toolbar';
+  const before = t.kind === 'line' && t.before ? t.before : undefined;
+  const own = e.dataTransfer.getData(BM_DND);
+  if (own) {
+    let ids = [];
+    try {
+      ids = JSON.parse(own).ids || [];
+    } catch {
+      /* not ours */
+    }
+    if (ids.length) call('bookmark.move', { ids, parent, before });
+    return;
+  }
+  const uri = (e.dataTransfer.getData('text/uri-list') || '').split(/\r?\n/).find((l) => l && !l.startsWith('#'));
+  const url = (uri || e.dataTransfer.getData('text/plain') || '').trim();
+  if (!url) return;
+  let title = e.dataTransfer.getData(BM_TITLE);
+  if (!title) {
+    const html = e.dataTransfer.getData('text/html');
+    const a = html ? new DOMParser().parseFromString(html, 'text/html').querySelector('a[href]') : null;
+    title = a ? a.textContent.trim() : '';
+  }
+  call('bookmark.drop', { url: url.slice(0, 8192), title: title.slice(0, 1024), parent, before });
+});
+$('bookmarks-bar').addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  const r = $('bookmarks-bar').getBoundingClientRect();
+  call('bookmark.menu', { id: null, anchor: { x: Math.round(e.clientX), y: Math.round(r.bottom + 2), width: 340 } });
+});
+
+// The site chip carries the current page: drag it to the bar (or anywhere) to bookmark / share it.
+$('siteinfo').draggable = true;
+$('siteinfo').addEventListener('dragstart', (e) => {
+  const t = active();
+  if (!t || !/^(https?|file|ftp):/i.test(t.url || '')) {
+    e.preventDefault();
+    return;
+  }
+  e.dataTransfer.effectAllowed = 'copyLink';
+  e.dataTransfer.setData('text/uri-list', t.url);
+  e.dataTransfer.setData('text/plain', t.url);
+  e.dataTransfer.setData(BM_TITLE, t.title || '');
+});
 
 function renderFind() {
   const t = active();
@@ -274,6 +522,7 @@ function render(s) {
   root.dataset.htmlfs = String(!!s.htmlFullscreen);
   renderTabs();
   renderToolbar();
+  renderFeatureButtons();
   renderBookmarksBar();
   renderFind();
   updateWindowControlsInset();

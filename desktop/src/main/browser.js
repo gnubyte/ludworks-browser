@@ -8,7 +8,7 @@ import { WindowCtl } from './window.js';
 import { Shortcuts } from './shortcuts.js';
 import { ProfileDb } from './profile/db.js';
 import { Prefs } from './profile/prefs.js';
-import { Bookmarks, ROOTS } from './profile/bookmarks.js';
+import { Bookmarks, ROOTS, bookmarkUrl } from './profile/bookmarks.js';
 import { History } from './profile/history.js';
 import { Permissions, LABELS as PERMISSION_LABELS } from './profile/permissions.js';
 import { Downloads } from './downloads.js';
@@ -19,6 +19,7 @@ import { chromeUserAgent } from './util/ua.js';
 import { log } from './util/log.js';
 import { APP_NAME } from './paths.js';
 import { DefaultBrowser } from './default-browser.js';
+import { WebRequestHub } from './webrequest.js';
 
 const NEWTAB = 'ludworks://newtab/';
 const SESSION_SAVE_DELAY = 1500;
@@ -43,6 +44,8 @@ export class Browser {
     this.pendingPermission = new Map(); // tab id → [{...}]
     this.shortcuts = new Shortcuts(this);
     this.sessionTimer = null;
+    this.features = []; // feature modules: toolbar buttons, popups, page commands, network hooks (see registerFeature)
+    this.attachedSessions = []; // [{ses, isPrivate}] set up by setupSession
   }
 
   // ---------------------------------------------------------------------------------- startup
@@ -68,14 +71,22 @@ export class Browser {
     if (this.account.acc && this.account.acc.pin) this.pinnedHosts.set(new URL(this.account.acc.serverUrl).hostname, this.account.acc.pin);
     this.autofill = new Autofill(this);
     this.passkeys = new Passkeys(this);
+    const { Privacy } = await import('./privacy/privacy.js');
+    this.privacy = new Privacy(this);
+    this.registerFeature(this.privacy);
+    setInterval(() => this.privacy.sweep(new Set(allWebContents.getAllWebContents().map((w) => w.id))), 60 * 1000).unref();
+    const { Blocker } = await import('./blocker/blocker.js');
+    this.blocker = new Blocker(this);
+    this.registerFeature(this.blocker);
     this.registerIpc();
 
-    this.bookmarks.on('change', () => this.broadcastShared());
+    this.bookmarks.on('change', () => this.onBookmarksChange());
     this.downloads.on('change', (ev) => this.onDownloadsChange(ev));
     this.prefs.on('change', (keys) => this.onPrefsChange(keys));
     nativeTheme.on('updated', () => this.forEachWindow((w) => w.applyTheme()));
 
     this.startEngineComponents();
+    await this.blocker.whenReady(1500); // cached filters in place before restored tabs load
     const restored = this.prefs.get('startup') === 'restore' ? this.restoreSession() : 0;
     const urls = [...this.urlsFromArgv(argv), ...earlyUrls];
     const firstRun = !this.db.getMeta('welcomed', false);
@@ -121,11 +132,12 @@ export class Browser {
     ses.setSpellCheckerEnabled(this.prefs.get('spellcheck'));
     this.downloads.attach(ses, { isPrivate });
     // Global Privacy Control / Do-Not-Track style headers and a cookie-free suggestion fetch path.
-    ses.webRequest.onBeforeSendHeaders((details, cb) => {
-      const headers = details.requestHeaders;
+    const hub = WebRequestHub.of(ses);
+    hub.onBeforeSendHeaders((_details, headers) => {
       if (this.prefs.get('sendGpc')) headers['Sec-GPC'] = '1';
-      cb({ requestHeaders: headers });
     });
+    this.attachedSessions.push({ ses, isPrivate });
+    for (const f of this.features) if (f.attachSession) f.attachSession(ses, hub, { isPrivate });
     ses.setCertificateVerifyProc((req, cb) => {
       // The Ludworks server's pinned certificate (trust-on-first-use, confirmed by the user) is
       // accepted for that host; everything else gets Chromium's normal verdict.
@@ -231,6 +243,14 @@ export class Browser {
     return NEWTAB;
   }
 
+  /** A window is about to close (not cancelled): closing the last normal window saves the session first. */
+  onWindowClosing(ctl) {
+    if (ctl.private || this.quitting) return;
+    if ([...this.windows].some((w) => w !== ctl && !w.private && !w.destroyed)) return;
+    this.saveSession();
+    this.lastWindowSaved = true; // keep this snapshot: quitting next must not overwrite it with an empty session
+  }
+
   onWindowClosed(ctl) {
     this.windows.delete(ctl);
     if (this.lastFocused === ctl) this.lastFocused = null;
@@ -285,7 +305,8 @@ export class Browser {
         active: Math.max(0, w.tabs.findIndex((t) => t.id === w.activeId)),
         tabs: w.tabs.map((t) => ({ url: t.wc.isDestroyed() ? t.url : t.wc.getURL() || t.url, title: t.title, pinned: t.pinned })).filter((t) => t.url),
       }));
-    if (windows.length || this.quitting) this.db.setMeta('session', { windows, savedAt: Date.now() });
+    if (windows.length) this.lastWindowSaved = false;
+    if (windows.length || (this.quitting && !this.lastWindowSaved)) this.db.setMeta('session', { windows, savedAt: Date.now() });
     const tabsSig = JSON.stringify(this.syncableTabs().map((t) => t.url));
     if (tabsSig !== this.lastTabsSig) {
       this.lastTabsSig = tabsSig;
@@ -338,8 +359,17 @@ export class Browser {
 
   openIn(ctl, url, disposition = 'current', { typed = false } = {}) {
     if (/^javascript:/i.test(url)) {
+      // Bookmarklets run in web pages only: never in ludworks:// pages (passwords, settings), which can
+      // call privileged page commands, nor in error, view-source or devtools pages.
       const tab = ctl.activeTab();
-      if (tab) tab.wc.executeJavaScript(decodeURIComponent(url.slice(11)), true).catch(() => {});
+      if (!tab || !/^(https?|file):/i.test(tab.wc.getURL())) return;
+      let code;
+      try {
+        code = decodeURIComponent(url.slice(11));
+      } catch {
+        return;
+      }
+      tab.wc.executeJavaScript(code, true).catch(() => {});
       return;
     }
     if (disposition === 'new-window') this.newWindow({ urls: [url], private: ctl.private });
@@ -363,6 +393,13 @@ export class Browser {
     if (/^ludworks:/i.test(url) && !/^ludworks:/i.test(tab.wc.getURL())) return { action: 'deny' };
     const ctl = tab.ctl;
     const background = disposition === 'background-tab';
+    // Websites opened from an internal page (e.g. "Open" on the Passwords page) get a normal tab of their
+    // own: no window.opener back to the ludworks:// page, and the usual content preload (autofill, passkeys).
+    if (/^ludworks:/i.test(tab.wc.getURL()) && !/^ludworks:/i.test(url)) {
+      if (disposition === 'new-window') this.newWindow({ urls: [url], private: ctl.private });
+      else ctl.newTab({ url, active: !background, opener: tab });
+      return { action: 'deny' };
+    }
     return {
       action: 'allow',
       outlivesOpener: true,
@@ -526,9 +563,10 @@ export class Browser {
     tab.wc.executeJavaScript(js, true).catch(() => {});
   }
 
+  /** Every live tab (tabs of closing windows and closed web contents are left out). */
   allTabs() {
     const out = [];
-    for (const w of this.windows) out.push(...w.tabs);
+    for (const w of this.windows) if (!w.destroyed) for (const t of w.tabs) if (!t.destroyed && !t.wc.isDestroyed()) out.push(t);
     return out;
   }
 
@@ -722,9 +760,10 @@ export class Browser {
   // ------------------------------------------------------------------------- shared shell state
   sharedShellState() {
     const prefs = this.prefs.all();
-    const bar = prefs.showBookmarksBar ? this.bookmarks.children('toolbar').slice(0, 200).map((n) => ({ id: n.id, type: n.type, title: n.title, url: n.url })) : null;
+    const bar = prefs.showBookmarksBar ? this.bookmarksBarItems() : null;
     return {
       bookmarksBar: bar,
+      bookmarkIcons: this.bookmarks.iconVersion, // the bar re-fetches favicons (bookmark.icons) when this changes
       showHomeButton: prefs.showHomeButton,
       engine: this.engine().name,
       downloads: this.downloads.summary(),
@@ -736,6 +775,174 @@ export class Browser {
 
   broadcastShared() {
     this.forEachWindow((w) => w.sendState());
+  }
+
+  // ---------------------------------------------------------------- bookmarks bar, menus, manager
+  onBookmarksChange() {
+    this.broadcastShared();
+    clearTimeout(this.bookmarksTimer);
+    this.bookmarksTimer = setTimeout(() => {
+      const ev = { type: 'bookmarks', version: this.bookmarks.version };
+      this.forEachWindow((w) => {
+        for (const t of w.tabs) if (!t.wc.isDestroyed() && /^ludworks:\/\/bookmarks\//.test(t.wc.getURL())) t.wc.send('page-event', ev);
+        if (w.popup && w.popup.kind === 'bookmark-folder' && w.overlay) w.overlay.webContents.send('popup-data', { kind: 'bookmark-folder', data: { refresh: true } });
+      });
+    }, 100);
+  }
+
+  /** Bookmarks bar items; also remembers the favicons of bookmarked pages shown in normal windows. */
+  bookmarksBarItems() {
+    this.forEachWindow((w) => {
+      const t = !w.private && w.activeTab();
+      if (t && t.favicon && !t.wc.isDestroyed()) this.bookmarks.noteIcon(t.wc.getURL(), t.favicon);
+    });
+    return this.bookmarks.children('toolbar').slice(0, 300).map((n) => ({ id: n.id, type: n.type, title: n.title, url: n.url }));
+  }
+
+  /** Items of a bookmark folder menu (from `start`, for the bar's » overflow menu), with favicons. */
+  bookmarkMenuItems(id, start = 0) {
+    return this.bookmarks
+      .children(id)
+      .slice(Math.max(0, start | 0))
+      .slice(0, 500)
+      .map((n) => ({ id: n.id, type: n.type, title: n.title, url: n.url, icon: n.type === 'url' ? this.bookmarks.iconFor(n.url) : null }));
+  }
+
+  /** Title for a bookmark added without one: the page title from history, else the address. */
+  historyTitle(url) {
+    const r = this.db.get('SELECT title FROM history WHERE url = ?', url);
+    return (r && r.title) || displayUrl(url) || url;
+  }
+
+  folderUrls(id) {
+    const out = [];
+    const walk = (n, depth) => {
+      for (const c of (n && n.children) || []) {
+        if (out.length >= 500) return;
+        if (c.type === 'url') out.push(c.url);
+        else if (depth < 32) walk(c, depth + 1);
+      }
+    };
+    walk(this.bookmarks.subtree(id), 0);
+    return out;
+  }
+
+  /**
+   * Opens bookmarks: 'current' | 'new-tab' | 'background-tab' | 'new-window' | 'private-window'.
+   * Bookmarklets (javascript:) run only in the current tab and never in an internal page; opening
+   * more than 20 tabs asks first.
+   */
+  async openBookmarks(ctl, urls, disposition = 'current') {
+    const list = urls.filter((u) => typeof u === 'string' && u).slice(0, 500);
+    if (list.length === 1 && /^javascript:/i.test(list[0])) {
+      const t = ctl.activeTab();
+      if (t && disposition === 'current' && /^(https?|file|ftp):/i.test(t.wc.getURL())) this.openIn(ctl, list[0], 'current');
+      return;
+    }
+    const pages = list.filter((u) => !/^javascript:/i.test(u));
+    if (!pages.length) return;
+    if (pages.length > 20) {
+      const r = await dialog.showMessageBox(ctl.win, { type: 'question', buttons: ['Open', 'Cancel'], defaultId: 0, cancelId: 1, title: 'Open bookmarks', message: `Open ${pages.length} tabs?` });
+      if (r.response !== 0) return;
+    }
+    if (disposition === 'new-window' || disposition === 'private-window') this.newWindow({ urls: pages, private: disposition === 'private-window' || ctl.private });
+    else if (pages.length === 1) this.openIn(ctl, pages[0], disposition);
+    else pages.forEach((url, i) => ctl.newTab({ url, active: disposition === 'new-tab' && i === 0 }));
+  }
+
+  /** A link dragged onto the bookmarks bar / a bookmark folder menu (from a page or the address bar). */
+  addDroppedLink({ url, title, parent = 'toolbar', before } = {}) {
+    const u = bookmarkUrl(url);
+    const p = this.bookmarks.folderExists(String(parent)) ? String(parent) : 'toolbar';
+    const t = String(title || '').trim().slice(0, 1024) || this.historyTitle(u);
+    return this.bookmarks.add({ parent: p, type: 'url', title: t, url: u, before: typeof before === 'string' && before ? before : undefined });
+  }
+
+  /** Native context menu for a bookmark on the bar / in a folder menu, or for the bar itself (id null). */
+  bookmarkMenu(ctl, id, anchor, { parent = 'toolbar', before } = {}) {
+    const n = id ? this.bookmarks.get(id) : null;
+    const a = anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y) ? anchor : { x: 8, y: ctl.topInset, width: 340 };
+    const popup = (data) => () => this.openPopup(ctl, 'bookmark-edit', a, data).catch(() => {});
+    let where = { parent: this.bookmarks.folderExists(parent) ? parent : 'toolbar', before };
+    if (n && n.type === 'folder') where = { parent: n.id };
+    else if (n) {
+      const sibs = this.bookmarks.children(n.parent);
+      const next = sibs[sibs.findIndex((s) => s.id === n.id) + 1];
+      where = { parent: n.parent, before: next ? next.id : undefined };
+    }
+    const items = [];
+    if (n && n.type === 'url') {
+      items.push(
+        { label: 'Open', click: () => this.openBookmarks(ctl, [n.url], 'current') },
+        { label: 'Open in new tab', click: () => this.openBookmarks(ctl, [n.url], 'background-tab') },
+        { label: 'Open in new window', click: () => this.openBookmarks(ctl, [n.url], 'new-window') },
+        { label: 'Open in private window', click: () => this.openBookmarks(ctl, [n.url], 'private-window') },
+        { type: 'separator' },
+        { label: 'Edit…', click: popup({ mode: 'edit', id: n.id }) },
+        { label: 'Delete', accelerator: 'Delete', registerAccelerator: false, click: () => this.bookmarks.removeMany([n.id]) },
+      );
+    } else if (n) {
+      const urls = this.folderUrls(n.id);
+      items.push(
+        { label: `Open all (${urls.length >= 500 ? '500+' : urls.length})`, enabled: urls.length > 0, click: () => this.openBookmarks(ctl, urls, 'new-tab') },
+        { label: 'Open all in new window', enabled: urls.length > 0, click: () => this.openBookmarks(ctl, urls, 'new-window') },
+        { label: 'Open all in private window', enabled: urls.length > 0, click: () => this.openBookmarks(ctl, urls, 'private-window') },
+        { type: 'separator' },
+        { label: 'Rename…', click: popup({ mode: 'edit', id: n.id }) },
+        { label: 'Delete', accelerator: 'Delete', registerAccelerator: false, click: () => this.bookmarks.removeMany([n.id]) },
+      );
+    }
+    const undo = this.bookmarks.undoInfo();
+    if (undo) items.push({ type: 'separator' }, { label: `Undo ${undo.label.charAt(0).toLowerCase()}${undo.label.slice(1)}`, click: () => this.bookmarks.undo() });
+    items.push(
+      { type: 'separator' },
+      { label: 'Add page…', click: popup({ mode: 'add-page', ...where }) },
+      { label: 'Add folder…', click: popup({ mode: 'add-folder', ...where }) },
+      { type: 'separator' },
+      { label: 'Show bookmarks bar', type: 'checkbox', checked: !!this.prefs.get('showBookmarksBar'), click: () => this.command('toggleBookmarksBar', { ctl }) },
+      { label: 'Bookmark manager', click: () => this.openInternal(ctl, 'bookmarks') },
+    );
+    Menu.buildFromTemplate(items.filter((x, i) => x.type !== 'separator' || i > 0)).popup({ window: ctl.win });
+  }
+
+  /**
+   * Adds a feature module (content blocker, privacy badges, ...). Every hook is optional:
+   *   name                                   unique id
+   *   attachSession(ses, hub, {isPrivate})   called for every browsing session (default and private), hub = WebRequestHub
+   *   toolbarButtons(ctl, tab)               → [{id, order?, icon, title, badge?, tone?: 'accent'|'warn'|'muted', pressed?, popup: {kind, width?}}]
+   *   popups: [kind, ...]                    popup kinds it renders (shell/overlay-<feature>.js) and handles:
+   *   openPopup(ctl, kind, anchor, data)     → ctl.showPopup(kind, data, {...anchor, width})
+   *   popupAction(ctl, kind, action, data)
+   *   pagePrefix, pages, pageCommand(tab, cmd, args)   ludworks:// page commands starting with pagePrefix, allowed on `pages`
+   * Call refreshToolbar() when a button's state changes.
+   */
+  registerFeature(f) {
+    this.features.push(f);
+    if (f.attachSession) for (const { ses, isPrivate } of this.attachedSessions) f.attachSession(ses, WebRequestHub.of(ses), { isPrivate });
+  }
+
+  featureButtons(ctl) {
+    const tab = ctl.activeTab();
+    const out = [];
+    for (const f of this.features) {
+      if (!f.toolbarButtons) continue;
+      try {
+        out.push(...(f.toolbarButtons(ctl, tab) || []));
+      } catch (e) {
+        log.warn('toolbar buttons failed', { feature: f.name, message: e.message });
+      }
+    }
+    return out.sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
+  }
+
+  /** Re-renders the toolbar of one window, or of all windows. */
+  refreshToolbar(ctl = null) {
+    if (ctl) ctl.sendState();
+    else this.broadcastShared();
+  }
+
+  featureForPopup(kind) {
+    return this.features.find((f) => Array.isArray(f.popups) && f.popups.includes(kind)) || null;
   }
 
   onPrefsChange(keys) {
@@ -760,7 +967,7 @@ export class Browser {
   }
 
   onPopupClosed(ctl, popup) {
-    if (popup.kind === 'suggestions') ctl.shell.send('suggestions-closed');
+    if (popup.kind === 'suggestions' && !ctl.shell.isDestroyed()) ctl.shell.send('suggestions-closed');
     if (popup.kind === 'permission') {
       // closing the prompt without a decision = dismiss (deny this time)
       const tab = ctl.activeTab();
@@ -913,11 +1120,24 @@ export class Browser {
         return null;
       case 'bookmark.open': {
         const n = this.bookmarks.get(String(a.id));
-        if (n && n.url) this.openIn(ctl, n.url, a.disposition || 'current');
+        if (n && n.url) this.openBookmarks(ctl, [n.url], ['current', 'new-tab', 'background-tab', 'new-window', 'private-window'].includes(a.disposition) ? a.disposition : 'current');
         return null;
       }
-      case 'bookmark.folder':
-        return this.openPopup(ctl, 'bookmark-folder', a.anchor, { id: String(a.id) });
+      case 'bookmark.folder': // folder menu; `start` = the bar's » overflow, `drag` = opened while dragging over it
+        return this.openPopup(ctl, 'bookmark-folder', a.anchor || {}, { id: String(a.id), start: a.start, drag: !!a.drag });
+      case 'bookmark.menu':
+        this.bookmarkMenu(ctl, typeof a.id === 'string' ? a.id : null, a.anchor, { before: typeof a.before === 'string' ? a.before : undefined });
+        return null;
+      case 'bookmark.edit':
+        return this.openPopup(ctl, 'bookmark-edit', a.anchor || {}, { mode: 'edit', id: String(a.id) });
+      case 'bookmark.move':
+        return this.bookmarks.moveMany((Array.isArray(a.ids) ? a.ids : [a.id]).filter((x) => typeof x === 'string').slice(0, 1000), { parent: String(a.parent || 'toolbar'), before: typeof a.before === 'string' && a.before ? a.before : undefined });
+      case 'bookmark.drop':
+        return this.addDroppedLink(a);
+      case 'bookmark.remove':
+        return this.bookmarks.removeMany([String(a.id)]);
+      case 'bookmark.icons':
+        return this.bookmarks.allIcons();
       case 'win':
         if (a.action === 'minimize') ctl.win.minimize();
         else if (a.action === 'maximize') ctl.win.isMaximized() ? ctl.win.unmaximize() : ctl.win.maximize();
@@ -1040,8 +1260,21 @@ export class Browser {
       }
       case 'bookmark-folder': {
         const id = String(data.id);
-        const items = this.bookmarks.children(id).map((n) => ({ id: n.id, type: n.type, title: n.title, url: n.url }));
-        return ctl.showPopup('bookmark-folder', { id, items }, { ...a, width: 280 });
+        if (!this.bookmarks.folderExists(id)) return null;
+        const start = Number.isInteger(data.start) && data.start > 0 ? data.start : 0;
+        const f = this.bookmarks.get(id);
+        // Opened by hovering a drag over the folder: keep focus (and the drag) where it is.
+        return ctl.showPopup('bookmark-folder', { id, start, title: f ? f.title : ROOTS[id], items: this.bookmarkMenuItems(id, start) }, { ...a, width: 300 }, { focus: !data.drag });
+      }
+      case 'bookmark-edit': {
+        const mode = ['add-page', 'add-folder'].includes(data.mode) ? data.mode : 'edit';
+        const n = mode === 'edit' ? this.bookmarks.get(String(data.id)) : null;
+        if (mode === 'edit' && !n) return null;
+        const url = tab ? tab.wc.getURL() : '';
+        const page = mode === 'add-page' && /^(https?|file|ftp):/i.test(url) ? { title: tab.title || displayUrl(url), url } : { title: '', url: '' };
+        const parent = n ? n.parent : this.bookmarks.folderExists(String(data.parent || '')) ? String(data.parent) : 'toolbar';
+        const fields = { mode, id: n ? n.id : null, type: n ? n.type : mode === 'add-folder' ? 'folder' : 'url', title: n ? n.title : page.title, url: n ? n.url || '' : page.url };
+        return ctl.showPopup('bookmark-edit', { ...fields, parent, before: typeof data.before === 'string' ? data.before : null, folders: this.folderList() }, { ...a, width: 340 });
       }
       case 'account':
         return ctl.showPopup('account', this.account.summary(), { ...a, width: 340 });
@@ -1049,8 +1282,11 @@ export class Browser {
         return this.autofill.openKeyBubble(ctl, a);
       case 'tab-search':
         return ctl.showPopup('tab-search', { tabs: ctl.tabs.map((t) => ({ id: t.id, title: t.title, url: t.wc.getURL() })) }, { ...a, width: 380 });
-      default:
+      default: {
+        const f = this.featureForPopup(kind);
+        if (f) return f.openPopup(ctl, kind, a, data || {});
         throw new Error(`unknown popup ${kind}`);
+      }
     }
   }
 
@@ -1138,11 +1374,46 @@ export class Browser {
       case 'bookmark-folder:open': {
         ctl.hidePopup('bookmark-folder');
         const n = this.bookmarks.get(String(d.id));
-        if (n && n.url) this.openIn(ctl, n.url, d.disposition || 'current');
+        if (n && n.url) this.openBookmarks(ctl, [n.url], ['current', 'new-tab', 'background-tab', 'new-window', 'private-window'].includes(d.disposition) ? d.disposition : 'current');
         return null;
       }
       case 'bookmark-folder:children':
-        return this.bookmarks.children(String(d.id)).map((n) => ({ id: n.id, type: n.type, title: n.title, url: n.url }));
+        return this.bookmarkMenuItems(String(d.id), Number(d.start) || 0);
+      case 'bookmark-folder:menu':
+        this.bookmarkMenu(ctl, typeof d.id === 'string' ? d.id : null, ctl.popup ? ctl.popup.anchor : null, { parent: String(d.parent || 'toolbar') });
+        return null;
+      case 'bookmark-folder:move':
+        this.bookmarks.moveMany((Array.isArray(d.ids) ? d.ids : []).filter((x) => typeof x === 'string').slice(0, 1000), { parent: String(d.parent), before: typeof d.before === 'string' && d.before ? d.before : undefined });
+        return this.bookmarkMenuItems(String(d.folder), Number(d.start) || 0);
+      case 'bookmark-folder:drop':
+        this.addDroppedLink({ url: d.url, title: d.title, parent: d.parent, before: d.before });
+        return this.bookmarkMenuItems(String(d.folder), Number(d.start) || 0);
+      case 'bookmark-folder:remove':
+        this.bookmarks.removeMany([String(d.id)]);
+        return this.bookmarkMenuItems(String(d.folder), Number(d.start) || 0);
+      case 'bookmark-edit:save': {
+        try {
+          const parent = this.bookmarks.folderExists(String(d.parent)) ? String(d.parent) : 'toolbar';
+          const title = String(d.title ?? '').slice(0, 1024);
+          const before = typeof d.before === 'string' && d.before ? d.before : undefined;
+          if (d.mode === 'edit') {
+            const n = this.bookmarks.get(String(d.id));
+            if (n) {
+              this.bookmarks.update(n.id, { title, url: n.type === 'url' ? bookmarkUrl(d.url) : undefined });
+              if (parent !== n.parent) this.bookmarks.moveMany([n.id], { parent });
+            }
+          } else if (d.mode === 'add-folder') this.bookmarks.add({ parent, type: 'folder', title: title.trim() || 'New folder', before });
+          else {
+            const url = bookmarkUrl(d.url);
+            this.bookmarks.add({ parent, type: 'url', title: title.trim() || this.historyTitle(url), url, before });
+          }
+        } catch (e) {
+          return { ok: false, error: e.message };
+        }
+        ctl.hidePopup('bookmark-edit');
+        if (tab) tab.update();
+        return { ok: true };
+      }
       case 'tab-search:open':
         ctl.hidePopup('tab-search');
         ctl.activate(Number(d.id));
@@ -1151,6 +1422,7 @@ export class Browser {
         if (kind === 'account' || kind === 'unlock' || kind === 'signin') return this.account.popupAction(ctl, kind, action, d);
         if (kind === 'key' || kind === 'save-password' || kind === 'fill') return this.autofill.popupAction(ctl, kind, action, d);
         if (kind === 'passkey') return this.passkeys.popupAction(ctl, kind, action, d);
+        if (this.featureForPopup(kind)) return this.featureForPopup(kind).popupAction(ctl, kind, action, d);
         throw new Error(`unknown popup action ${kind}:${action}`);
     }
   }

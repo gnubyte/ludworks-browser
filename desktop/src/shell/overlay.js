@@ -1,6 +1,8 @@
 // Popup overlay: renders whichever popup the main process asks for and reports its size.
 import { icon, h, clear, faviconEl } from './icons.js';
 import { POPUPS as ACCOUNT_POPUPS } from './overlay-account.js';
+import { POPUPS as BLOCKER_POPUPS } from './overlay-blocker.js';
+import { POPUPS as PRIVACY_POPUPS } from './overlay-privacy.js';
 
 const rootEl = document.getElementById('root');
 const html = document.documentElement;
@@ -198,24 +200,202 @@ const POPUPS = {
     );
   },
 
-  'bookmark-folder'(data) {
+  // A bookmarks-bar folder (or the bar's » overflow): open, browse subfolders, drag to reorder or
+  // to move into a subfolder / onto the bar, drop links and bar items in, right-click, Delete key.
+  'bookmark-folder'(data, ctx) {
+    const DND = 'application/x-ludworks-bookmark';
     const box = h('div', { class: 'popup' });
-    const list = h('div', { class: 'list' });
-    const render = (items) => {
+    const head = h('div', { class: 'head', style: { padding: '8px 10px 0' } });
+    const list = h('div', { class: 'list', style: { maxHeight: '520px', overflow: 'auto', position: 'relative', minWidth: '240px' } });
+    const line = h('div', { hidden: true, style: { position: 'absolute', left: '12px', right: '12px', height: '2px', borderRadius: '1px', background: 'var(--accent)', pointerEvents: 'none' } });
+    const stack = []; // parent folders when browsing into subfolders
+    let cur = { id: data.id, start: data.start || 0, title: data.title || '' };
+    let items = data.items || [];
+    let dragId = null;
+    let hover = { id: null, t: null };
+    const into = (n) => {
+      stack.push(cur);
+      cur = { id: n.id, start: 0, title: n.title };
+      load();
+    };
+    const load = async () => render(await act('bookmark-folder', 'children', { id: cur.id, start: cur.start }));
+    const render = (list2) => {
+      items = list2 || [];
+      clear(head);
+      if (stack.length) {
+        head.append(
+          h('button', { class: 'icon-btn small', title: 'Back', 'aria-label': 'Back', onclick: () => { cur = stack.pop(); load(); } }, icon('back', { size: 15 })),
+          h('h2', { class: 'grow t', style: { fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, cur.title || 'Folder'),
+        );
+      }
+      head.hidden = !stack.length;
       clear(list);
-      if (!items.length) list.append(h('div', { class: 'pad muted' }, '(empty)'));
+      if (!items.length) list.append(h('div', { class: 'pad muted', dataset: { empty: '1' } }, 'Empty folder — drop bookmarks here'));
       for (const n of items) {
-        const row = h('button', { class: 'item' }, h('span', { class: 'ic' }, n.type === 'folder' ? icon('folder', { size: 16 }) : faviconEl(null, n.title || n.url, 16)), h('span', { class: 'grow t' }, n.title || n.url));
-        row.addEventListener('click', async (e) => {
-          if (n.type === 'folder') render(await act('bookmark-folder', 'children', { id: n.id }));
-          else act('bookmark-folder', 'open', { id: n.id, disposition: e.ctrlKey || e.metaKey ? 'background-tab' : 'current' });
+        const row = h('button', { class: 'item', draggable: 'true', dataset: { id: n.id }, title: n.type === 'url' ? `${n.title || ''}\n${n.url}` : n.title }, h('span', { class: 'ic' }, n.type === 'folder' ? icon('folder', { size: 16 }) : faviconEl(n.icon, n.title || n.url, 16)), h('span', { class: 'grow t' }, n.title || n.url), n.type === 'folder' ? h('span', { class: 'kbd' }, icon('forward', { size: 14 })) : null);
+        row.addEventListener('click', (e) => {
+          if (n.type === 'folder') into(n);
+          else act('bookmark-folder', 'open', { id: n.id, disposition: e.ctrlKey || e.metaKey ? 'background-tab' : e.shiftKey ? 'new-window' : 'current' });
+        });
+        row.addEventListener('auxclick', (e) => {
+          if (e.button === 1 && n.type === 'url') act('bookmark-folder', 'open', { id: n.id, disposition: 'background-tab' });
+        });
+        row.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          act('bookmark-folder', 'menu', { id: n.id, parent: cur.id });
+        });
+        row.addEventListener('keydown', async (e) => {
+          if (e.key === 'Delete') {
+            e.preventDefault();
+            render(await act('bookmark-folder', 'remove', { id: n.id, folder: cur.id, start: cur.start }));
+          } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const sib = e.key === 'ArrowDown' ? row.nextElementSibling : row.previousElementSibling;
+            if (sib && sib.focus) sib.focus();
+          } else if (e.key === 'ArrowRight' && n.type === 'folder') into(n);
+          else if ((e.key === 'ArrowLeft' || e.key === 'Backspace') && stack.length) {
+            cur = stack.pop();
+            load();
+          }
+        });
+        row.addEventListener('dragstart', (e) => {
+          dragId = n.id;
+          e.dataTransfer.effectAllowed = 'copyMove';
+          e.dataTransfer.setData(DND, JSON.stringify({ ids: [n.id] }));
+          if (n.url) {
+            e.dataTransfer.setData('text/uri-list', n.url);
+            e.dataTransfer.setData('text/plain', n.url);
+          }
+          row.style.opacity = '0.5';
+        });
+        row.addEventListener('dragend', () => {
+          dragId = null;
+          row.style.opacity = '';
         });
         list.append(row);
       }
+      list.append(line);
     };
-    render(data.items || []);
-    box.append(list);
+    const target = (e) => {
+      const types = [...e.dataTransfer.types];
+      if (!types.includes(DND) && !types.includes('text/uri-list') && !types.includes('text/plain')) return null;
+      const row = e.target.closest && e.target.closest('.item[data-id]');
+      if (!row) {
+        const rowsNow = list.querySelectorAll('.item[data-id]');
+        const last = rowsNow[rowsNow.length - 1];
+        return { parent: cur.id, before: null, y: last ? last.offsetTop + last.offsetHeight : 6 };
+      }
+      const n = items.find((x) => x.id === row.dataset.id);
+      const f = (e.clientY - row.getBoundingClientRect().top) / row.offsetHeight;
+      if (n.type === 'folder' && n.id !== dragId && f > 0.25 && f < 0.75) return { parent: n.id, before: null, row, n };
+      const i = items.indexOf(n) + (f >= 0.5 ? 1 : 0);
+      return { parent: cur.id, before: items[i] ? items[i].id : null, y: row.offsetTop + (f >= 0.5 ? row.offsetHeight : 0) };
+    };
+    const clearMarks = () => {
+      line.hidden = true;
+      for (const el of list.querySelectorAll('.item.sel')) el.classList.remove('sel');
+    };
+    list.addEventListener('dragover', (e) => {
+      const t = target(e);
+      clearMarks();
+      if (!t) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = [...e.dataTransfer.types].includes(DND) ? 'move' : 'copy';
+      if (t.row) {
+        t.row.classList.add('sel');
+        if (hover.id !== t.n.id) {
+          clearTimeout(hover.t);
+          hover = { id: t.n.id, t: setTimeout(() => into(t.n), 800) }; // hovering a subfolder opens it
+        }
+      } else {
+        clearTimeout(hover.t);
+        hover.id = null;
+        line.hidden = false;
+        line.style.top = `${t.y - 1}px`;
+      }
+    });
+    list.addEventListener('dragleave', (e) => {
+      if (!list.contains(e.relatedTarget)) {
+        clearMarks();
+        clearTimeout(hover.t);
+        hover.id = null;
+      }
+    });
+    list.addEventListener('drop', async (e) => {
+      const t = target(e);
+      clearMarks();
+      clearTimeout(hover.t);
+      hover.id = null;
+      if (!t) return;
+      e.preventDefault();
+      const where = { parent: t.parent, before: t.before, folder: cur.id, start: cur.start };
+      try {
+        const own = e.dataTransfer.getData(DND);
+        if (own) render(await act('bookmark-folder', 'move', { ...where, ids: JSON.parse(own).ids }));
+        else {
+          const url = (e.dataTransfer.getData('text/uri-list') || '').split(/\r?\n/).find((l) => l && !l.startsWith('#')) || e.dataTransfer.getData('text/plain').trim();
+          const html = e.dataTransfer.getData('text/html');
+          const a = html ? new DOMParser().parseFromString(html, 'text/html').querySelector('a[href]') : null;
+          if (url) render(await act('bookmark-folder', 'drop', { ...where, url, title: e.dataTransfer.getData('application/x-ludworks-title') || (a ? a.textContent.trim() : '') }));
+        }
+      } catch {
+        load();
+      }
+    });
+    list.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      act('bookmark-folder', 'menu', { id: null, parent: cur.id });
+    });
+    ctx.onData = (d) => {
+      if (d && d.refresh) load();
+    };
+    render(items);
+    box.append(head, list);
     return box;
+  },
+
+  // Edit a bookmark / rename a folder / add a page or folder (from the bookmarks bar context menu).
+  'bookmark-edit'(data) {
+    const isFolder = data.type === 'folder';
+    const name = h('input', { class: 'input', 'aria-label': 'Name', placeholder: isFolder ? 'Folder name' : 'Name', spellcheck: 'false' });
+    name.value = data.title || (data.mode === 'add-folder' ? 'New folder' : '');
+    const url = isFolder ? null : h('input', { class: 'input', 'aria-label': 'URL', placeholder: 'https://example.com', spellcheck: 'false' });
+    if (url) url.value = data.url || '';
+    const folder = h('select', { class: 'input', style: { width: '100%' }, 'aria-label': 'Folder' });
+    let skipBelow = -1; // a folder cannot go into itself or below itself
+    for (const f of data.folders || []) {
+      if (skipBelow >= 0 && f.depth > skipBelow) continue;
+      skipBelow = -1;
+      if (isFolder && f.id === data.id) {
+        skipBelow = f.depth;
+        continue;
+      }
+      folder.append(h('option', { value: f.id }, `${' '.repeat(f.depth)}${f.title || 'Folder'}`));
+    }
+    folder.value = data.parent;
+    const err = h('div', { class: 'notice warn', hidden: true });
+    const save = async () => {
+      const r = await act('bookmark-edit', 'save', { mode: data.mode, id: data.id, title: name.value, url: url ? url.value : undefined, parent: folder.value, before: folder.value === data.parent ? data.before : null });
+      if (r && r.ok === false) {
+        err.textContent = r.error;
+        err.hidden = false;
+      }
+    };
+    for (const el of [name, url]) if (el) el.addEventListener('keydown', (e) => e.key === 'Enter' && save());
+    setTimeout(() => {
+      const f = data.mode === 'add-page' && !data.url ? url : name;
+      f.focus();
+      f.select();
+    }, 30);
+    const heading = data.mode === 'add-folder' ? 'New folder' : data.mode === 'add-page' ? 'Add page' : isFolder ? 'Rename folder' : 'Edit bookmark';
+    return h(
+      'div',
+      { class: 'popup' },
+      h('div', { class: 'head' }, h('h2', {}, heading)),
+      h('div', { class: 'pad stack' }, h('label', { class: 'field' }, h('span', {}, 'Name'), name), url ? h('label', { class: 'field' }, h('span', {}, 'URL'), url) : null, h('label', { class: 'field' }, h('span', {}, 'Folder'), folder), err),
+      h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => close('bookmark-edit') }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')),
+    );
   },
 
   permission(data) {
@@ -290,6 +470,8 @@ const POPUPS = {
   },
 
   ...ACCOUNT_POPUPS,
+  ...BLOCKER_POPUPS,
+  ...PRIVACY_POPUPS,
 };
 
 // ------------------------------------------------------------------------------------- wiring

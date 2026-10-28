@@ -86,6 +86,7 @@ export class WindowCtl extends EventEmitter {
     this.win.on('blur', () => this.hidePopup());
     this.win.on('close', (e) => {
       if (!browser.quitting && this.tabs.length > 1 && !browser.confirmCloseWindow(this)) e.preventDefault();
+      else browser.onWindowClosing(this);
     });
     this.win.on('closed', () => this.destroy());
     this.stateTimer = null;
@@ -371,14 +372,16 @@ export class WindowCtl extends EventEmitter {
     if (!this.popup || (kind && this.popup.kind !== kind)) return;
     const was = this.popup;
     this.popup = null;
-    if (this.overlay) {
+    // The window fires blur while it closes; by then its views may already be gone.
+    if (this.destroyed || this.win.isDestroyed()) return;
+    if (this.overlay && !this.overlay.webContents.isDestroyed()) {
       this.overlay.setVisible(false);
       this.overlay.webContents.send('popup', null);
     }
     this.browser.onPopupClosed(this, was);
     if (was.modal || was.closeOnBlur) {
       const t = this.activeTab();
-      if (t && !this.shellFocused) t.wc.focus();
+      if (t && !this.shellFocused && !t.wc.isDestroyed()) t.wc.focus();
     }
   }
 
@@ -428,6 +431,7 @@ export class WindowCtl extends EventEmitter {
       activeId: this.activeId,
       tabs: this.tabs.map((t) => t.snapshot()),
       keyState: this.browser.autofill ? this.browser.autofill.keyStateFor(this.activeTab()) : null,
+      toolbarButtons: this.browser.featureButtons(this),
       ...this.browser.sharedShellState(),
     };
   }

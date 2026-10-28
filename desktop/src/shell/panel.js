@@ -50,13 +50,16 @@ function render({ tabId, error, theme }) {
     return;
   }
   const hint = NET_HINTS[String(error.code)] || { title: 'This page isn’t available', why: () => `${host} could not be loaded.`, tips: [] };
+  // Element.append() would print a null child as the text "null".
   root.append(
-    h('div', { class: 'art' }, icon('globe', { size: 36 })),
-    h('h1', {}, hint.title),
-    h('p', {}, hint.why(host)),
-    hint.tips.length ? h('ul', {}, ...hint.tips.map((t) => h('li', {}, t))) : null,
-    h('div', { class: 'code' }, String(error.description || error.code || '')),
-    h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => act('retry') }, 'Try again'), String(error.code) === '-105' ? h('button', { class: 'btn', onclick: () => act('search') }, 'Search instead') : null),
+    ...[
+      h('div', { class: 'art' }, icon('globe', { size: 36 })),
+      h('h1', {}, hint.title),
+      h('p', {}, hint.why(host)),
+      hint.tips.length ? h('ul', {}, ...hint.tips.map((t) => h('li', {}, t))) : null,
+      h('div', { class: 'code' }, String(error.description || error.code || '')),
+      h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => act('retry') }, 'Try again'), String(error.code) === '-105' ? h('button', { class: 'btn', onclick: () => act('search') }, 'Search instead') : null),
+    ].filter(Boolean),
   );
 }
 

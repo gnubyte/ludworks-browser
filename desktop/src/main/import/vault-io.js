@@ -1,102 +1,46 @@
-// Vault import/export: the vendored Ludworks web library (Bitwarden JSON/CSV/password-protected JSON,
-// KeePass) plus what Ludworks Browser adds on top — passkeys (VAULT-CRYPTO.md §8.4: Bitwarden
-// `login.fido2Credentials` ⇄ `login.passkeys`) and Chrome/Edge/Firefox password CSV files.
+// Vault import/export façade for Ludworks Browser:
+//  * Bitwarden — full fidelity (bitwarden-io.js): unencrypted JSON (individual and organization), password-protected
+//    JSON (PBKDF2 / Argon2id, bw-crypto.js), the .zip export with attachments, CSV (individual and organization);
+//    passkeys (VAULT-CRYPTO.md §8.4: `login.fido2Credentials` ⇄ `login.passkeys`), TOTP, custom field types,
+//    password history, SSH keys and the other Bitwarden-only types, re-prompt, archive, collections.
+//    Account-restricted encrypted exports are recognised and explained.
+//  * KeePass (.kdbx, XML) via the vendored web library; Chrome/Edge/Firefox password CSV files.
 
-import { parseBitwardenJson, parseBitwardenCsv, toBitwardenJson, toBitwardenCsv, parseCsv } from '../../vendor/vault/bitwarden.js';
-import { bitwardenToVault, vaultToBitwarden, importVault, exportVault, detectFormat as detectLibFormat } from '../../vendor/vault/convert.js';
-import { validPasskeyKey } from '../passkeys.js';
+import { parseCsv } from '../../vendor/vault/bitwarden.js';
+import { importVault, exportVault, detectFormat as detectLibFormat } from '../../vendor/vault/convert.js';
+import {
+  bwCredentialIdToRaw,
+  rawToBwCredentialId,
+  bwToPasskey as bwToPasskeyResult,
+  passkeyToBw,
+  readBitwarden,
+  inspectBitwarden,
+  bitwardenToItems,
+  itemsToBitwarden,
+  summarizeItems,
+  itemWarnings,
+  exportBitwarden,
+} from './bitwarden-io.js';
+import { isZip } from './zip.js';
+import { ACCOUNT_RESTRICTED_MESSAGE } from './bw-crypto.js';
 
-const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const b64u = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const fromB64u = (s) => Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+export { bwCredentialIdToRaw, rawToBwCredentialId, passkeyToBw };
 
-// ----------------------------------------------------------------------------------- passkeys
-/** Bitwarden credentialId (GUID or "b64."+base64url) → raw credential id as base64url. */
-export function bwCredentialIdToRaw(id) {
-  const s = String(id || '');
-  if (s.startsWith('b64.')) return b64u(fromB64u(s.slice(4)));
-  if (GUID_RE.test(s)) return b64u(Buffer.from(s.replace(/-/g, ''), 'hex'));
-  return null;
+/** Bitwarden fido2Credential → Ludworks passkey, or null (reason appended to warnings). */
+export function bwToPasskey(c, warnings = [], itemName = '') {
+  const r = bwToPasskeyResult(c);
+  if (!r.passkey) warnings.push(`“${itemName}”: a passkey could not be used because ${r.reason}`);
+  return r.passkey;
 }
 
-/** Raw credential id (base64url) → Bitwarden credentialId: GUID form for 16 bytes, else "b64.". */
-export function rawToBwCredentialId(b64url) {
-  const raw = fromB64u(b64url);
-  if (raw.length === 16) {
-    const h = raw.toString('hex');
-    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-  }
-  return `b64.${b64u(raw)}`;
-}
-
-export function bwToPasskey(c, warnings, itemName) {
-  if (!c || typeof c !== 'object') return null;
-  if ((c.keyType && c.keyType !== 'public-key') || (c.keyAlgorithm && c.keyAlgorithm !== 'ECDSA') || (c.keyCurve && c.keyCurve !== 'P-256')) {
-    warnings.push(`"${itemName}": a passkey with an unsupported key type was skipped`);
-    return null;
-  }
-  const id = bwCredentialIdToRaw(c.credentialId);
-  if (!id || typeof c.keyValue !== 'string' || !validPasskeyKey(c.keyValue) || typeof c.rpId !== 'string' || !c.rpId) {
-    warnings.push(`"${itemName}": a passkey that could not be read was skipped`);
-    return null;
-  }
-  const counter = parseInt(String(c.counter ?? '0'), 10);
-  return {
-    credential_id: id,
-    rp_id: String(c.rpId).toLowerCase(),
-    rp_name: String(c.rpName || c.rpId),
-    user_handle: c.userHandle ? b64u(fromB64u(String(c.userHandle))) : '',
-    user_name: String(c.userName || ''),
-    user_display_name: String(c.userDisplayName || ''),
-    algorithm: -7,
-    private_key: b64u(fromB64u(c.keyValue)),
-    counter: Number.isSafeInteger(counter) && counter >= 0 ? counter : 0,
-    discoverable: String(c.discoverable) !== 'false',
-    created_at: typeof c.creationDate === 'string' ? c.creationDate : new Date().toISOString(),
-  };
-}
-
-export function passkeyToBw(p) {
-  return {
-    credentialId: rawToBwCredentialId(p.credential_id),
-    keyType: 'public-key',
-    keyAlgorithm: 'ECDSA',
-    keyCurve: 'P-256',
-    keyValue: p.private_key,
-    rpId: p.rp_id,
-    userHandle: p.user_handle || null,
-    userName: p.user_name || null,
-    counter: String(Number.isSafeInteger(p.counter) ? p.counter : 0),
-    rpName: p.rp_name || p.rp_id,
-    userDisplayName: p.user_display_name || null,
-    discoverable: p.discoverable === false ? 'false' : 'true',
-    creationDate: p.created_at || new Date().toISOString(),
-  };
-}
-
-/** Bitwarden-shaped data → vault interchange data, keeping passkeys. */
-export function bitwardenToVaultWithPasskeys(bw) {
-  const conv = bitwardenToVault(bw);
-  const live = (bw.items || []).filter((it) => !it.deletedDate);
-  conv.warnings = conv.warnings.filter((w) => !/passkeys cannot be transferred/.test(w));
-  live.forEach((src, i) => {
-    const creds = src && src.type === 1 && src.login && Array.isArray(src.login.fido2Credentials) ? src.login.fido2Credentials : [];
-    const dst = conv.items[i];
-    if (!creds.length || !dst || dst.type !== 'login') return;
-    const pks = creds.map((c) => bwToPasskey(c, conv.warnings, dst.name)).filter(Boolean);
-    if (pks.length) dst.login.passkeys = pks;
-  });
-  return conv;
+/** Bitwarden-shaped data → vault interchange data, keeping passkeys and everything else (see bitwarden-io.js). */
+export function bitwardenToVaultWithPasskeys(bw, opts) {
+  return bitwardenToItems(bw, opts);
 }
 
 /** Vault interchange data → Bitwarden-shaped data, keeping passkeys. */
 export function vaultToBitwardenWithPasskeys(data) {
-  const bw = vaultToBitwarden(data);
-  (data.items || []).forEach((it, i) => {
-    const pks = it && it.login && Array.isArray(it.login.passkeys) ? it.login.passkeys : [];
-    if (pks.length && bw.items[i] && bw.items[i].login) bw.items[i].login.fido2Credentials = pks.filter((p) => p && p.algorithm === -7).map(passkeyToBw);
-  });
-  return bw;
+  return itemsToBitwarden(data).doc;
 }
 
 // ---------------------------------------------------------------------------- browser CSVs
@@ -140,75 +84,145 @@ export function parseBrowserPasswordCsv(text) {
   return { folders: [], items, warnings: [] };
 }
 
+// ---------------------------------------------------------------------------- detection
+const FORMAT_LABELS = {
+  'bitwarden-json': 'Bitwarden JSON',
+  'bitwarden-zip': 'Bitwarden ZIP (with attachments)',
+  'bitwarden-csv': 'Bitwarden CSV',
+  'browser-csv': 'Browser password CSV',
+  kdbx: 'KeePass database',
+  'keepass-xml': 'KeePass XML',
+};
+
+export function formatLabel(f) {
+  return FORMAT_LABELS[f] || 'Unknown format';
+}
+
 /**
  * Detect the format of a password import file.
- * @returns {'bitwarden-json'|'bitwarden-csv'|'browser-csv'|'kdbx'|'keepass-xml'|null}
+ * @returns {'bitwarden-json'|'bitwarden-zip'|'bitwarden-csv'|'browser-csv'|'kdbx'|'keepass-xml'|null}
  */
 export function detectFormat(buf) {
-  const lib = detectLibFormat(new Uint8Array(buf));
+  if (isZip(buf)) return 'bitwarden-zip';
+  const lib = detectLibFormat(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
   if (lib && lib !== 'bitwarden-csv') return lib;
   const first = buf.toString('utf8', 0, 4096).replace(/^﻿/, '').split(/\r?\n/, 1)[0].toLowerCase();
-  if (/^"?folder"?,"?favorite"?,"?type"?/.test(first)) return 'bitwarden-csv';
+  if (/^"?(folder|collections)"?,/.test(first)) return 'bitwarden-csv';
   if (/(^|,)"?url"?(,|$)/.test(first) && /(^|,)"?username"?(,|$)/.test(first) && /(^|,)"?password"?(,|$)/.test(first)) return 'browser-csv';
   return lib;
 }
 
-/** Is this a password-protected Bitwarden JSON (needs the file password)? */
-export function needsPassword(format, buf) {
-  if (format === 'kdbx') return true;
-  if (format !== 'bitwarden-json') return false;
-  try {
-    const j = JSON.parse(buf.toString('utf8').replace(/^﻿/, ''));
-    return !!(j && j.encrypted === true && j.passwordProtected === true);
-  } catch {
-    return false;
+/**
+ * What the import UI needs to know before asking for a password.
+ * @returns {{format: string|null, label: string, needsPassword: boolean, accountRestricted: boolean, kdf: object|null, attachments: number, error: string|null}}
+ */
+export function inspectImport(buf, format = detectFormat(buf)) {
+  const out = { format, label: formatLabel(format), needsPassword: format === 'kdbx', accountRestricted: false, kdf: null, attachments: 0, error: null };
+  if (format === 'bitwarden-json' || format === 'bitwarden-zip') {
+    try {
+      const i = inspectBitwarden(buf);
+      if (!i.kind) out.error = 'This JSON file is not a Bitwarden export.';
+      out.needsPassword = i.encryption === 'password';
+      out.accountRestricted = i.encryption === 'account';
+      out.kdf = i.kdf || null;
+      out.attachments = i.attachments || 0;
+      if (i.kdf && i.kdf.error) out.error = i.kdf.error;
+      if (out.accountRestricted) out.error = ACCOUNT_RESTRICTED_MESSAGE;
+    } catch (e) {
+      out.error = e.message;
+    }
   }
+  return out;
 }
 
+/** Is this a password-protected file (needs the file password)? */
+export function needsPassword(format, buf) {
+  return inspectImport(buf, format).needsPassword;
+}
+
+// ---------------------------------------------------------------------------- import
 /**
- * Parse an import file into vault interchange data {folders, items, warnings}.
- * @param {Buffer} buf
- * @param {{format?: string, password?: string}} opts
+ * Read (and decrypt) an import file. Bitwarden files stay Bitwarden-shaped until mapImport, so options such as
+ * "include trash" can be changed without decrypting again.
+ * @returns {Promise<{format: string, bitwarden?: {doc, attachments, source}, data?: {folders, items, warnings}}>}
  */
-export async function parseImport(buf, { format = null, password = undefined } = {}) {
+export async function openImport(buf, { format = null, password = undefined } = {}) {
   const f = format || detectFormat(buf);
   const text = () => buf.toString('utf8').replace(/^﻿/, '');
   switch (f) {
     case 'bitwarden-json':
-      return bitwardenToVaultWithPasskeys(await parseBitwardenJson(text(), { password }));
-    case 'bitwarden-csv':
-      return bitwardenToVault(parseBitwardenCsv(text()));
+    case 'bitwarden-zip':
+    case 'bitwarden-csv': {
+      const r = await readBitwarden(buf, { password });
+      return { format: f, bitwarden: r };
+    }
     case 'browser-csv': {
       const r = parseBrowserPasswordCsv(text());
       if (!r) throw new Error('This CSV file does not look like a password export.');
-      return r;
+      return { format: f, data: r };
     }
     case 'kdbx':
     case 'keepass-xml':
-      return importVault(f, f === 'kdbx' ? new Uint8Array(buf) : text(), { password });
+      return { format: f, data: await importVault(f, f === 'kdbx' ? new Uint8Array(buf) : text(), { password }) };
     default:
-      throw new Error('Unrecognised file. Supported: Bitwarden JSON (also password-protected) and CSV, Chrome/Edge/Firefox password CSV, KeePass (.kdbx, XML).');
+      throw new Error('Unrecognised file. Supported: Bitwarden (.json — also password-protected —, .zip with attachments, .csv), Chrome/Edge/Firefox password CSV, KeePass (.kdbx, XML).');
   }
 }
 
 /**
+ * Opened import → vault interchange data {folders, items, warnings, stats, attachments, trash}.
+ * @param {Awaited<ReturnType<typeof openImport>>} opened
+ * @param {{includeTrash?: boolean}} [opts]
+ */
+export function mapImport(opened, { includeTrash = false } = {}) {
+  let conv;
+  if (opened.bitwarden) conv = bitwardenToItems(opened.bitwarden.doc, { includeTrash, attachments: opened.bitwarden.attachments });
+  else conv = { ...opened.data, warnings: [...(opened.data.warnings || [])], trash: 0, attachments: [] };
+  const stats = summarizeItems(conv.items);
+  conv.warnings.push(...itemWarnings(conv.items, stats));
+  return { ...conv, stats };
+}
+
+/**
+ * Parse an import file into vault interchange data {folders, items, warnings, stats, …}.
+ * @param {Buffer} buf
+ * @param {{format?: string, password?: string, includeTrash?: boolean}} opts
+ */
+export async function parseImport(buf, { format = null, password = undefined, includeTrash = false } = {}) {
+  return mapImport(await openImport(buf, { format, password }), { includeTrash });
+}
+
+// ---------------------------------------------------------------------------- export
+/**
  * Serialise vault interchange data.
  * @param {'bitwarden-json'|'bitwarden-json-protected'|'bitwarden-csv'|'kdbx'} format
- * @returns {Promise<string|Uint8Array>}
+ * @param {{password?: string, kdf?: 'pbkdf2'|'argon2id'}} [opts]
+ * @returns {Promise<{out: string|Uint8Array, warnings: string[]}>}
  */
-export async function serializeExport(format, data, { password } = {}) {
+export async function exportVaultFile(format, data, { password, kdf } = {}) {
   switch (format) {
-    case 'bitwarden-json':
-      return toBitwardenJson(vaultToBitwardenWithPasskeys(data));
-    case 'bitwarden-json-protected':
+    case 'bitwarden-json': {
+      const r = await exportBitwarden('json', data);
+      return { out: r.text, warnings: r.warnings };
+    }
+    case 'bitwarden-json-protected': {
       if (!password) throw new Error('A file password is required.');
-      return toBitwardenJson(vaultToBitwardenWithPasskeys(data), { password, kdfType: 0, kdfIterations: 600000 });
-    case 'bitwarden-csv':
-      return toBitwardenCsv(vaultToBitwarden(data));
+      const r = await exportBitwarden('json-protected', data, { password, kdf });
+      return { out: r.text, warnings: r.warnings };
+    }
+    case 'bitwarden-csv': {
+      const r = await exportBitwarden('csv', data);
+      return { out: r.text, warnings: r.warnings };
+    }
     case 'kdbx':
       if (!password) throw new Error('A database password is required.');
-      return exportVault('kdbx', data, { password });
+      return { out: await exportVault('kdbx', data, { password }), warnings: [] };
     default:
       throw new Error(`unknown export format ${format}`);
   }
+}
+
+/** Serialise vault interchange data (string or bytes only). */
+export async function serializeExport(format, data, opts = {}) {
+  return (await exportVaultFile(format, data, opts)).out;
 }

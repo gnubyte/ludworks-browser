@@ -4,6 +4,7 @@
 import { app, dialog, shell } from 'electron';
 import { ENGINES, currentEngine, validTemplate } from './search.js';
 import { log } from './util/log.js';
+import { bookmarkUrl } from './profile/bookmarks.js';
 
 const ALLOWED = {
   newtab: ['newtab.'],
@@ -21,6 +22,10 @@ function themeOf(browser) {
   return browser.prefs.get('theme');
 }
 
+// bookmarks.*: a selection of ids and an insertion point (before a sibling id, or an index)
+const idsOf = (a) => (Array.isArray(a.ids) ? a.ids : [a.id]).filter((x) => typeof x === 'string').slice(0, 100000);
+const placeOf = (a) => ({ before: typeof a.before === 'string' && a.before ? a.before : undefined, position: Number.isInteger(a.position) ? a.position : undefined });
+
 /**
  * @param {import('./browser.js').Browser} browser
  * @param {import('./tab.js').Tab} tab
@@ -29,8 +34,13 @@ function themeOf(browser) {
  * @param {any} a
  */
 export async function pageCommand(browser, tab, page, cmd, a) {
-  if (!(ALLOWED[page] || []).some((p) => (p.endsWith('.') ? cmd.startsWith(p) : cmd === p))) throw new Error('not allowed');
   const b = browser;
+  const feature = b.features.find((f) => f.pagePrefix && cmd.startsWith(f.pagePrefix));
+  if (feature) {
+    if (!(feature.pages || []).includes(page)) throw new Error('not allowed');
+    return feature.pageCommand(tab, cmd, a || {});
+  }
+  if (!(ALLOWED[page] || []).some((p) => (p.endsWith('.') ? cmd.startsWith(p) : cmd === p))) throw new Error('not allowed');
   switch (cmd) {
     // ------------------------------------------------------------------- new tab
     case 'newtab.data':
@@ -114,20 +124,39 @@ export async function pageCommand(browser, tab, page, cmd, a) {
     // ----------------------------------------------------------------- bookmarks
     case 'bookmarks.tree':
       return b.bookmarks.tree();
-    case 'bookmarks.add':
-      return b.bookmarks.add({ parent: String(a.parent || 'other'), type: a.type === 'folder' ? 'folder' : 'url', title: String(a.title || ''), url: String(a.url || ''), position: Number.isInteger(a.position) ? a.position : undefined });
-    case 'bookmarks.update':
-      b.bookmarks.update(String(a.id), { title: a.title, url: a.url });
+    case 'bookmarks.data': // compact snapshot for the bookmark manager
+      return { ...b.bookmarks.flat(), version: b.bookmarks.version, undo: b.bookmarks.undoInfo() };
+    case 'bookmarks.icons':
+      return b.bookmarks.allIcons();
+    case 'bookmarks.add': {
+      const type = a.type === 'folder' ? 'folder' : 'url';
+      const url = type === 'url' ? bookmarkUrl(a.url) : '';
+      const title = String(a.title || '').trim() || (type === 'url' ? b.historyTitle(url) : '');
+      return b.bookmarks.add({ parent: String(a.parent || 'other'), type, title, url, ...placeOf(a) });
+    }
+    case 'bookmarks.update': {
+      const n = b.bookmarks.get(String(a.id));
+      if (!n) throw new Error('That bookmark no longer exists.');
+      b.bookmarks.update(n.id, { title: typeof a.title === 'string' ? a.title : undefined, url: n.type === 'url' && typeof a.url === 'string' ? bookmarkUrl(a.url) : undefined });
       return null;
+    }
     case 'bookmarks.move':
-      b.bookmarks.move(String(a.id), { parent: String(a.parent), position: Number.isInteger(a.position) ? a.position : undefined });
-      return null;
+      return b.bookmarks.moveMany(idsOf(a), { parent: String(a.parent), ...placeOf(a) });
+    case 'bookmarks.copy':
+      return b.bookmarks.copyMany(idsOf(a), { parent: String(a.parent), ...placeOf(a) });
     case 'bookmarks.remove':
-      b.bookmarks.remove(String(a.id));
+      return b.bookmarks.removeMany(idsOf(a));
+    case 'bookmarks.sort':
+      return b.bookmarks.sortFolder(String(a.id));
+    case 'bookmarks.undo':
+      return b.bookmarks.undo();
+    case 'bookmarks.open': {
+      // Bookmarklets never run from here: they would execute inside this internal page.
+      const urls = (Array.isArray(a.urls) ? a.urls : [a.url]).filter((u) => typeof u === 'string' && u && !/^javascript:/i.test(u)).slice(0, 500);
+      const disposition = a.newTab ? 'new-tab' : ['current', 'new-tab', 'background-tab', 'new-window', 'private-window'].includes(a.disposition) ? a.disposition : 'current';
+      await b.openBookmarks(tab.ctl, urls, disposition);
       return null;
-    case 'bookmarks.open':
-      if (typeof a.url === 'string') b.openIn(tab.ctl, a.url, a.newTab ? 'new-tab' : 'current');
-      return null;
+    }
 
     // -------------------------------------------------------------------- about
     case 'about':

@@ -15,6 +15,9 @@ export const DEFAULT_PREFS = Object.freeze({
   askWhereToSave: false,
   downloadsDir: '',
   sendGpc: true, // Sec-GPC: 1 (Global Privacy Control)
+  blockThirdPartyCookies: false, // strip Cookie / Set-Cookie on third-party requests
+  trackerButton: true, // toolbar: cross-site tracking cookies
+  clearHistoryButton: true, // toolbar: clear recent history
   offerToSavePasswords: true,
   passkeys: true, // act as WebAuthn authenticator with vault passkeys
   vaultLockMinutes: 15,
@@ -45,6 +48,9 @@ const VALIDATORS = {
   askWhereToSave: (v) => typeof v === 'boolean',
   downloadsDir: (v) => typeof v === 'string' && v.length <= 4096,
   sendGpc: (v) => typeof v === 'boolean',
+  blockThirdPartyCookies: (v) => typeof v === 'boolean',
+  trackerButton: (v) => typeof v === 'boolean',
+  clearHistoryButton: (v) => typeof v === 'boolean',
   offerToSavePasswords: (v) => typeof v === 'boolean',
   passkeys: (v) => typeof v === 'boolean',
   vaultLockMinutes: (v) => Number.isInteger(v) && v >= 0 && v <= 1440,

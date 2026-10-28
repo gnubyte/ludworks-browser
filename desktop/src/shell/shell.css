@@ -72,12 +72,33 @@ html, body { background: var(--frame); overflow: hidden; user-select: none; }
 @keyframes pulse { 50% { background: var(--accent-soft); color: var(--accent); } }
 .badge { position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 
+/* Feature buttons (content blocker, tracking cookies, clear history): icon + small count badge. */
+#feature-buttons { display: flex; align-items: center; gap: 2px; }
+#feature-buttons .feature { position: relative; }
+#feature-buttons .feature.on { color: var(--accent); }
+#feature-buttons .feature.tone-muted { color: var(--faint); }
+#feature-buttons .feature.tone-warn { color: var(--danger); }
+#feature-buttons .count { position: absolute; right: 0; bottom: 1px; min-width: 15px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--accent); color: var(--on-accent); font-size: 9.5px; font-weight: 700; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums; pointer-events: none; box-shadow: 0 0 0 1.5px var(--toolbar); }
+#feature-buttons .feature.tone-warn .count { background: var(--danger); }
+#feature-buttons .feature.tone-muted .count { background: var(--surface-2); color: var(--muted); }
+
 /* ------------------------------------------------------------ bookmarks bar */
-#bookmarks-bar { height: 30px; background: var(--toolbar); display: flex; align-items: center; gap: 2px; padding: 0 8px 2px; overflow: hidden; border-bottom: 1px solid var(--border); }
+#bookmarks-bar { position: relative; height: 30px; background: var(--toolbar); display: flex; align-items: center; gap: 2px; padding: 0 8px 2px; overflow: hidden; border-bottom: 1px solid var(--border); }
+#bookmarks-bar .bm-items { position: relative; display: flex; align-items: center; gap: 2px; flex: 1 1 auto; min-width: 0; height: 100%; overflow: hidden; }
 #bookmarks-bar .bm { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 13px; border: 0; background: transparent; color: var(--text); font-size: 12px; max-width: 200px; flex: none; }
 #bookmarks-bar .bm:hover { background: var(--hover); }
+#bookmarks-bar .bm:focus-visible, #bookmarks-bar .bm-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 #bookmarks-bar .bm .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#bookmarks-bar .empty { color: var(--faint); font-size: 12px; padding: 0 6px; }
+#bookmarks-bar .bm.folder > .icon { color: var(--muted); flex: none; }
+#bookmarks-bar .bm.over { display: none; } /* in the » menu */
+#bookmarks-bar .bm.dragging { opacity: 0.4; }
+#bookmarks-bar .drop-into { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+#bookmarks-bar .drop-into > .icon { color: var(--accent); }
+#bookmarks-bar .bm-more { flex: none; width: 28px; height: 26px; border-radius: 13px; border: 0; padding: 0; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+#bookmarks-bar .bm-more:hover { background: var(--hover); color: var(--text); }
+#bookmarks-bar .bm-drop { position: absolute; top: 4px; bottom: 6px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--accent); pointer-events: none; }
+#bookmarks-bar .empty { color: var(--faint); font-size: 12px; padding: 0 6px; white-space: nowrap; }
+#bookmarks-bar.drop-empty .empty { color: var(--accent); }
 #chrome.no-bar #toolbar { border-bottom: 1px solid var(--border); }
 
 /* ------------------------------------------------------------------ findbar */

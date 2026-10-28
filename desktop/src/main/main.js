@@ -6,12 +6,19 @@
 import { app, protocol } from 'electron';
 import path from 'node:path';
 import { APP_NAME, APP_USER_MODEL_ID, profileDirFromArgs, defaultProfileDir } from './paths.js';
-import { log } from './util/log.js';
+import { log, setLogFile } from './util/log.js';
 
 const explicitProfile = profileDirFromArgs(process.argv);
 const profileDir = explicitProfile || defaultProfileDir();
 app.setName(APP_NAME);
 app.setPath('userData', profileDir);
+setLogFile(path.join(profileDir, 'logs', 'main.log'));
+
+// An exception escaping an event handler would otherwise show Electron's "A JavaScript error occurred
+// in the main process" dialog (seen at shutdown). Log it and keep going; startup failures are handled
+// by boot() below.
+process.on('uncaughtException', (e) => log.error('uncaught exception', e));
+process.on('unhandledRejection', (e) => log.warn('unhandled promise rejection', e instanceof Error ? e : { reason: String(e) }));
 if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
 // Remote debugging hands every cookie and open page to whoever connects. Like Chrome 136+, it is
@@ -83,5 +90,6 @@ async function boot() {
     if (process.platform !== 'darwin') app.quit();
   });
   app.on('before-quit', () => browser.beforeQuit());
-  await browser.start(process.argv.slice(1), pendingUrls.splice(0));
+  // Unpackaged runs (electron.exe <app dir> ...) carry the app directory as the first argument.
+  await browser.start(process.argv.slice(process.defaultApp ? 2 : 1), pendingUrls.splice(0));
 }
