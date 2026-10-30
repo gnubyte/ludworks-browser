@@ -17,7 +17,9 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
 
 ## Features
 
-* Tabs (pinning, drag to reorder, mute, reopen closed), private windows (separate in-memory session), session restore,
+* Tabs (pinning, drag to reorder, drag out of the strip into a window of their own or onto another window's strip,
+  "Move to new window / Move to window" in the tab menu, mute, reopen closed), private windows (separate in-memory
+  session), session restore,
   address bar with history/bookmark/open-tab/search suggestions (Google, DuckDuckGo, Bing, Brave, Startpage, Ecosia,
   Kagi or custom), history (90 days, searchable), downloads (dangerous-type warnings),
   find in page, zoom (remembered per site), print, save page, PDF viewer, picture-in-picture, dev tools, spell check,

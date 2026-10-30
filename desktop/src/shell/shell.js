@@ -129,39 +129,129 @@ function renderTabs() {
   });
 }
 
-// Drag a tab to reorder (within the strip).
+// Drag a tab along the strip to reorder it. Pulled out of the strip it moves into a window of its own that
+// follows the cursor; dropped on another window's strip it joins that window (src/main/tab-drag.js: the main
+// process moves the windows, from the OS cursor, and marks the drop spot in the other window's strip).
+const DETACH_DISTANCE = 30; // px above / below the strip (or beside the window) that pull a tab out
+let tabDrag = null; // {id, el, pointerId, x, grab: {x, y}, mode: null|'strip'|'out', sent}
+const tabDrop = h('div', { id: 'tab-drop', hidden: true });
+$('tabstrip').append(tabDrop);
+
 function setupDrag(el, id) {
-  let startX = 0;
-  let dragging = false;
   el.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || e.target.closest('.close,.audio')) return;
-    startX = e.clientX;
-    dragging = false;
+    if (tabDrag) endTabDrag(null, false); // a drag that never saw its pointer released
+    const r = el.getBoundingClientRect();
+    // where the cursor holds the tab once it is the first tab of a window of its own
+    const grab = { x: Math.round($('tabs').getBoundingClientRect().left + e.clientX - r.left), y: Math.round(e.clientY) };
+    tabDrag = { id, el, pointerId: e.pointerId, x: e.clientX, grab, mode: null, sent: false };
     el.setPointerCapture(e.pointerId);
   });
-  el.addEventListener('pointermove', (e) => {
-    if (!el.hasPointerCapture(e.pointerId)) return;
-    if (!dragging && Math.abs(e.clientX - startX) > 6) {
-      dragging = true;
-      el.classList.add('dragging');
+}
+
+function outOfStrip(e) {
+  const r = $('tabstrip').getBoundingClientRect();
+  return e.clientY < r.top - DETACH_DISTANCE || e.clientY > r.bottom + DETACH_DISTANCE || e.clientX < -DETACH_DISTANCE || e.clientX > window.innerWidth + DETACH_DISTANCE;
+}
+
+/** Live tab elements other than the dragged one, and the index before which a drop at clientX lands. */
+function stripDropIndex(clientX, exceptEl) {
+  const others = [...$('tabs').children].filter((c) => c !== exceptEl);
+  let index = others.length;
+  for (let i = 0; i < others.length; i++) {
+    const r = others[i].getBoundingClientRect();
+    if (clientX < r.left + r.width / 2) {
+      index = i;
+      break;
     }
-  });
-  el.addEventListener('pointerup', (e) => {
-    if (!el.hasPointerCapture(e.pointerId)) return;
-    el.releasePointerCapture(e.pointerId);
-    if (!dragging) return;
-    el.classList.remove('dragging');
-    const others = [...$('tabs').children].filter((c) => c !== el);
-    let index = others.length;
-    for (let i = 0; i < others.length; i++) {
-      const r = others[i].getBoundingClientRect();
-      if (e.clientX < r.left + r.width / 2) {
-        index = i;
-        break;
-      }
+  }
+  return { others, index };
+}
+
+/** The drop marker before tab `index` of `others` (after the last one past the end); null hides it. */
+function showTabDrop(others, index) {
+  if (index === null || !others.length) {
+    tabDrop.hidden = true;
+    return;
+  }
+  const base = $('tabstrip').getBoundingClientRect().left;
+  const x = index < others.length ? others[index].getBoundingClientRect().left : others[others.length - 1].getBoundingClientRect().right;
+  tabDrop.style.left = `${Math.round(x - base - 1)}px`;
+  tabDrop.hidden = false;
+}
+
+window.addEventListener('pointermove', (e) => {
+  const d = tabDrag;
+  if (!d || e.pointerId !== d.pointerId) return;
+  if (d.mode === 'out') {
+    if (!d.sent) {
+      d.sent = true; // one move in flight at a time
+      requestAnimationFrame(() => {
+        d.sent = false;
+        if (tabDrag === d) call('tab.drag', { phase: 'move' });
+      });
     }
-    call('tab.move', { id, index });
+    return;
+  }
+  if (!state.agent && !state.fullscreen && outOfStrip(e)) {
+    // the page keeps sending until the button is released: hold the pointer on the strip, as the tab's own
+    // element goes away when the tab moves into a window of its own
+    d.mode = 'out';
+    d.el.classList.add('dragging');
+    showTabDrop([], null);
+    $('tabstrip').setPointerCapture(d.pointerId);
+    call('tab.drag', { phase: 'start', id: d.id, x: d.grab.x, y: d.grab.y });
+    return;
+  }
+  if (!d.mode && Math.abs(e.clientX - d.x) > 6) {
+    d.mode = 'strip';
+    d.el.classList.add('dragging');
+  }
+  if (d.mode === 'strip') {
+    const { others, index } = stripDropIndex(e.clientX, d.el);
+    showTabDrop(others, index);
+  }
+});
+
+function endTabDrag(e, released) {
+  const d = tabDrag;
+  tabDrag = null;
+  d.el.classList.remove('dragging');
+  showTabDrop([], null);
+  if (d.mode === 'out') call('tab.drag', { phase: 'end' });
+  else if (d.mode === 'strip' && released) call('tab.move', { id: d.id, index: stripDropIndex(e.clientX, d.el).index });
+}
+window.addEventListener('pointerup', (e) => {
+  if (tabDrag && e.pointerId === tabDrag.pointerId) endTabDrag(e, true);
+});
+window.addEventListener('pointercancel', (e) => {
+  if (tabDrag && e.pointerId === tabDrag.pointerId) endTabDrag(e, false);
+});
+// Capture lost without a pointerup (e.g. the window lost the mouse); the hand-over to the strip is not a loss.
+window.addEventListener('lostpointercapture', (e) => {
+  const d = tabDrag;
+  if (!d || e.pointerId !== d.pointerId || (d.mode === 'out' && e.target !== $('tabstrip'))) return;
+  endTabDrag(e, false);
+});
+
+// Another window's tab being dragged over this strip: where it would land (src/main/tab-drag.js).
+window.lw.on('tab-drop', (m) => {
+  const others = [...$('tabs').children];
+  showTabDrop(others, m && Number.isInteger(m.index) ? Math.min(m.index, others.length) : null);
+});
+
+// The strip's geometry, for the main process to place tabs dropped here from other windows.
+let lastStrip = '';
+function reportStrip() {
+  const tabs = [...$('tabs').children].map((el) => {
+    const r = el.getBoundingClientRect();
+    return { id: Number(el.dataset.id), left: Math.round(r.left), right: Math.round(r.right) };
   });
+  const msg = { tabs, bottom: Math.round($('tabstrip').getBoundingClientRect().bottom) };
+  const key = JSON.stringify(msg);
+  if (key === lastStrip) return;
+  lastStrip = key;
+  call('tab.strip', msg);
 }
 
 // --------------------------------------------------------------------------------- toolbar
@@ -527,6 +617,7 @@ function render(s) {
   renderFind();
   updateWindowControlsInset();
   reportLayout();
+  reportStrip();
 }
 
 // --------------------------------------------------------------------------------- omnibox
@@ -663,4 +754,8 @@ $('find-close').addEventListener('click', () => call('find', { close: true }));
 // ------------------------------------------------------------------------------------ boot
 window.lw.on('state', render);
 call('ready').then((s) => s && render(s));
-window.addEventListener('resize', () => state && renderTabs());
+window.addEventListener('resize', () => {
+  if (!state) return;
+  renderTabs();
+  reportStrip();
+});

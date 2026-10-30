@@ -17,12 +17,16 @@ const OVERLAY_PAD = { x: 18, top: 4 };
 
 export class WindowCtl extends EventEmitter {
   /**
-   * @param {{browser: import('./browser.js').Browser, private?: boolean, bounds?: any, maximized?: boolean}} o
+   * @param {{browser: import('./browser.js').Browser, private?: boolean, bounds?: any, maximized?: boolean, inactive?: boolean}} o
+   *   inactive: show without taking focus (a window made for a tab being dragged out: tab-drag.js)
    */
-  constructor({ browser, private: isPrivate = false, bounds = null, maximized = false }) {
+  constructor({ browser, private: isPrivate = false, bounds = null, maximized = false, inactive = false }) {
     super();
     this.browser = browser;
     this.private = isPrivate;
+    this.showInactive = inactive;
+    this.focusedAt = Date.now(); // the most recently focused window is the frontmost one (tab-drag.js)
+    this.tabStrip = null; // {tabs: [{id, left, right}], bottom} reported by the shell, for dropping dragged tabs
     this.session = isPrivate ? browser.privateSession() : browser.session;
     this.tabs = [];
     this.activeId = null;
@@ -65,7 +69,7 @@ export class WindowCtl extends EventEmitter {
     this.shell.on('will-navigate', (e) => e.preventDefault());
     this.shell.on('page-title-updated', (e) => e.preventDefault()); // the window title follows the active tab
     this.shell.loadURL(SHELL_URL);
-    this.win.once('ready-to-show', () => this.win.show());
+    this.win.once('ready-to-show', () => (this.showInactive ? this.win.showInactive() : this.win.show()));
 
     this.win.on('resize', () => this.layout());
     this.win.on('maximize', () => this.sendState());
@@ -81,6 +85,7 @@ export class WindowCtl extends EventEmitter {
     });
     this.win.on('focus', () => {
       browser.lastFocused = this;
+      this.focusedAt = Date.now();
       if (this.activeTab()) this.activeTab().lastActive = Date.now();
     });
     this.win.on('blur', () => this.hidePopup());
@@ -131,7 +136,7 @@ export class WindowCtl extends EventEmitter {
   newTab({ url = null, active = true, index = null, opener = null, webContents = null, pinned = false, typed = false } = {}) {
     const target = url || (webContents ? null : this.browser.newTabUrl());
     const tab = new Tab({ ctl: this, url: null, webContents, opener, pinned });
-    tab.on('update', () => this.onTabUpdate(tab));
+    tab.on('update', () => tab.ctl.onTabUpdate(tab)); // tab.ctl: tabs can move to other windows (adoptTab)
     let at = this.tabs.length;
     if (Number.isInteger(index)) at = Math.max(0, Math.min(index, this.tabs.length));
     else if (opener) {
@@ -152,7 +157,8 @@ export class WindowCtl extends EventEmitter {
     return tab;
   }
 
-  activate(id) {
+  /** `focus: false` leaves the keyboard where it is (a tab joining a window it is being dragged with). */
+  activate(id, { focus = true } = {}) {
     const tab = this.tabById(id);
     if (!tab) return;
     const prev = this.activeTab();
@@ -161,7 +167,7 @@ export class WindowCtl extends EventEmitter {
     tab.lastActive = Date.now();
     this.hidePopup();
     this.layout();
-    if (!this.shellFocused) tab.wc.focus();
+    if (focus && !this.shellFocused) tab.wc.focus();
     this.sendState();
   }
 
@@ -190,6 +196,43 @@ export class WindowCtl extends EventEmitter {
       const opener = tab.openerId && this.tabById(tab.openerId);
       this.activate((opener || this.tabs[Math.min(i, this.tabs.length - 1)]).id);
     }
+    this.sendState();
+    this.browser.scheduleSessionSave();
+  }
+
+  /**
+   * Takes a tab out of this window with its page left running, for another window to adopt
+   * (Browser.moveTabToWindow). The window stays open even when that was its last tab.
+   */
+  releaseTab(tab) {
+    const i = this.tabs.indexOf(tab);
+    if (i < 0) return;
+    const wasActive = this.activeId === tab.id;
+    if (this.htmlFullscreenTab === tab) this.setHtmlFullscreen(tab, false);
+    if (wasActive) this.hidePopup(); // popups (permission prompts, autofill) are about the active tab
+    this.tabs.splice(i, 1);
+    try {
+      this.win.contentView.removeChildView(tab.view);
+    } catch {
+      /* window already gone */
+    }
+    if (wasActive) {
+      this.activeId = null;
+      if (this.tabs.length) this.activate(this.tabs[Math.min(i, this.tabs.length - 1)].id);
+    }
+    this.sendState();
+    this.browser.scheduleSessionSave();
+  }
+
+  /** Takes in a tab released by another window (releaseTab) at `index` (default: last) and shows it. */
+  adoptTab(tab, { index = null, focus = true } = {}) {
+    tab.ctl = this;
+    tab.openerId = null; // "back to the opener on close" is about tabs of one window
+    const at = Number.isInteger(index) ? Math.max(0, Math.min(index, this.tabs.length)) : this.tabs.length;
+    this.tabs.splice(at, 0, tab);
+    this.win.contentView.addChildView(tab.view);
+    if (this.overlay && this.popup) this.win.contentView.addChildView(this.overlay); // keep an open popup above the page
+    this.activate(tab.id, { focus });
     this.sendState();
     this.browser.scheduleSessionSave();
   }

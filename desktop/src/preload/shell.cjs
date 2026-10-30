@@ -22,6 +22,7 @@ const CHANNELS = new Set([
   'key-state',
   'open-account',
   'open-key',
+  'tab-drop',
 ]);
 
 contextBridge.exposeInMainWorld('lw', {
