@@ -1,6 +1,6 @@
 // The browser: profile services, sessions, windows, commands and IPC wiring.
 
-import { app, session, ipcMain, dialog, nativeTheme, shell, Menu, desktopCapturer, webContents as allWebContents } from 'electron';
+import { app, session, ipcMain, dialog, nativeTheme, shell, Menu, desktopCapturer, screen, webContents as allWebContents } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -20,6 +20,7 @@ import { log } from './util/log.js';
 import { APP_NAME } from './paths.js';
 import { DefaultBrowser } from './default-browser.js';
 import { WebRequestHub } from './webrequest.js';
+import { TabDrag, cleanStrip } from './tab-drag.js';
 
 const NEWTAB = 'ludworks://newtab/';
 const SESSION_SAVE_DELAY = 1500;
@@ -43,6 +44,7 @@ export class Browser {
     this.pinnedHosts = new Map(); // host → fingerprint (Ludworks server pin, set by the account service)
     this.pendingPermission = new Map(); // tab id → [{...}]
     this.shortcuts = new Shortcuts(this);
+    this.tabDrag = new TabDrag(this, () => screen.getCursorScreenPoint());
     this.sessionTimer = null;
     this.features = []; // feature modules: toolbar buttons, popups, page commands, network hooks (see registerFeature)
     this.attachedSessions = []; // [{ses, isPrivate}] set up by setupSession
@@ -156,11 +158,12 @@ export class Browser {
   }
 
   // ---------------------------------------------------------------------------------- windows
-  newWindow({ urls = null, private: isPrivate = false, bounds = null, maximized = false, tabs = null, active = 0, empty = false } = {}) {
+  newWindow({ urls = null, private: isPrivate = false, bounds = null, maximized = false, tabs = null, active = 0, empty = false, inactive = false } = {}) {
+    // inactive: opens without taking focus (a tab being dragged out: tab-drag.js)
     const saved = !bounds && !isPrivate ? this.db.getMeta('window_state', null) : null;
-    const ctl = new WindowCtl({ browser: this, private: isPrivate, bounds: bounds || (saved && saved.bounds) || null, maximized: maximized || !!(saved && saved.maximized) });
+    const ctl = new WindowCtl({ browser: this, private: isPrivate, bounds: bounds || (saved && saved.bounds) || null, maximized: maximized || !!(saved && saved.maximized), inactive });
     this.windows.add(ctl);
-    this.lastFocused = ctl;
+    if (!inactive) this.lastFocused = ctl;
     if (empty) {
       // the caller adds the first tab (window.open popups adopt the opener-created webContents)
     } else if (tabs && tabs.length) {
@@ -171,6 +174,38 @@ export class Browser {
     ctl.win.on('resize', () => this.rememberWindowState(ctl));
     ctl.win.on('move', () => this.rememberWindowState(ctl));
     return ctl;
+  }
+
+  /**
+   * Moves a tab, its page left running, into another window of the same kind (normal or private) at `index`
+   * (default: last). The window it leaves closes when that was its last tab.
+   */
+  moveTabToWindow(tab, to, { index = null, focus = true } = {}) {
+    const from = tab && tab.ctl;
+    if (!from || !to || to === from || tab.destroyed || from.destroyed || to.destroyed || to.private !== from.private) return false;
+    const fromIndex = from.tabs.indexOf(tab);
+    if (fromIndex < 0) return false;
+    from.releaseTab(tab);
+    to.adoptTab(tab, { index, focus });
+    if (!from.tabs.length) from.win.close();
+    for (const f of this.features) {
+      if (!f.onTabMoved) continue;
+      try {
+        f.onTabMoved(tab, from, fromIndex);
+      } catch (e) {
+        log.warn('onTabMoved failed', { feature: f.name, message: e.message });
+      }
+    }
+    return true;
+  }
+
+  /** Tab menu "Move to new window": a window of its own, offset from the one it leaves. */
+  moveTabToNewWindow(tab) {
+    const from = tab.ctl;
+    if (from.tabs.length < 2) return;
+    const b = from.win.getNormalBounds();
+    const to = this.newWindow({ private: from.private, empty: true, bounds: { x: b.x + 30, y: b.y + 30, width: b.width, height: b.height } });
+    this.moveTabToWindow(tab, to);
   }
 
   rememberWindowState(ctl) {
@@ -1055,6 +1090,15 @@ export class Browser {
       case 'tab.move':
         ctl.moveTab(Number(a.id), Number(a.index));
         return null;
+      case 'tab.drag': // a tab dragged out of the strip (tab-drag.js); positions come from the OS cursor
+        if (sender !== ctl.shell) return null;
+        if (a.phase === 'start') return this.tabDrag.start(ctl, byId(a.id), { x: Number(a.x) || 0, y: Number(a.y) || 0 });
+        if (a.phase === 'move') this.tabDrag.move();
+        else if (a.phase === 'end') this.tabDrag.end();
+        return null;
+      case 'tab.strip':
+        if (sender === ctl.shell) ctl.tabStrip = cleanStrip(a);
+        return null;
       case 'tab.mute': {
         const t = byId(a.id);
         if (t) {
@@ -1159,6 +1203,18 @@ export class Browser {
   tabMenu(ctl, tab) {
     if (!tab) return;
     const i = ctl.tabs.indexOf(tab);
+    // tabs move between windows of one kind (normal or private), never into or out of an AI agent's window
+    const move = [];
+    if (!ctl.agent) {
+      move.push({ label: 'Move to new window', enabled: ctl.tabs.length > 1, click: () => this.moveTabToNewWindow(tab) });
+      const others = [...this.windows].filter((w) => w !== ctl && !w.destroyed && !w.agent && w.private === ctl.private);
+      const name = (w) => {
+        const t = w.activeTab();
+        const title = (t && t.title) || 'New Tab';
+        return `${title.length > 40 ? `${title.slice(0, 40)}…` : title}${w.tabs.length > 1 ? ` and ${w.tabs.length - 1} more` : ''}`;
+      };
+      if (others.length) move.push({ label: 'Move to window', submenu: others.map((w) => ({ label: name(w), click: () => this.moveTabToWindow(tab, w) && w.win.focus() })) });
+    }
     Menu.buildFromTemplate([
       { label: 'New tab to the right', click: () => ctl.newTab({ index: i + 1 }) },
       { type: 'separator' },
@@ -1166,6 +1222,7 @@ export class Browser {
       { label: 'Duplicate', click: () => ctl.newTab({ url: tab.wc.getURL(), index: i + 1 }) },
       { label: tab.pinned ? 'Unpin' : 'Pin', click: () => { tab.pinned = !tab.pinned; ctl.moveTab(tab.id, tab.pinned ? ctl.tabs.filter((t) => t.pinned && t !== tab).length : i); tab.update(); } },
       { label: tab.wc.isAudioMuted() ? 'Unmute site' : 'Mute site', click: () => { tab.wc.setAudioMuted(!tab.wc.isAudioMuted()); tab.update(); } },
+      ...(move.length ? [{ type: 'separator' }, ...move] : []),
       { type: 'separator' },
       { label: 'Close', click: () => ctl.closeTab(tab.id) },
       { label: 'Close other tabs', enabled: ctl.tabs.length > 1, click: () => ctl.tabs.filter((t) => t !== tab && !t.pinned).forEach((t) => ctl.closeTab(t.id)) },
