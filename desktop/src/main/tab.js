@@ -10,11 +10,14 @@ let nextId = 1;
 const MAX_FAVICON_BYTES = 256 * 1024;
 const faviconCache = new Map(); // url → data URL (small LRU)
 
-/** Web content preferences shared by every tab (popups inherit them from their opener). */
-export function tabWebPreferences({ session, preload, spellcheck }) {
+/**
+ * Web content preferences shared by every tab and by the windows pages open themselves. The content
+ * preload is not set here: it is registered on the session (Browser.setupSession), because Electron
+ * does not run a webPreferences preload in window.open / target=_blank children.
+ */
+export function tabWebPreferences({ session, spellcheck }) {
   return {
     session,
-    preload,
     sandbox: true,
     contextIsolation: true,
     nodeIntegration: false,
@@ -46,7 +49,7 @@ export class Tab extends EventEmitter {
     this.pinned = pinned;
     this.view = webContents
       ? new WebContentsView({ webContents })
-      : new WebContentsView({ webPreferences: tabWebPreferences({ session: ctl.session, preload: this.browser.paths.contentPreload, spellcheck: this.browser.prefs.get('spellcheck') }) });
+      : new WebContentsView({ webPreferences: tabWebPreferences({ session: ctl.session, spellcheck: this.browser.prefs.get('spellcheck') }) });
     this.wc = this.view.webContents;
     this.view.setBackgroundColor('#ffffff');
     this.view.setVisible(false);
@@ -229,6 +232,9 @@ export class Tab extends EventEmitter {
   /** Web content may not navigate to internal or shell pages (only the user can, from the address bar). */
   guardNavigation(d) {
     const target = String(d.url || '');
+    // Pages and frames of installed extensions (their own pages, web-accessible iframes such as a password
+    // manager's inline menu): Chromium itself enforces web_accessible_resources for loads from websites.
+    if (/^chrome-extension:/i.test(target) && this.browser.extensions && this.browser.extensions.isInstalledUrl(target)) return;
     if (/^(lwshell|chrome|devtools|chrome-extension):/i.test(target)) return d.preventDefault();
     if (/^ludworks:/i.test(target)) {
       const from = d.initiator ? d.initiator.url || '' : this.wc.getURL();
@@ -253,7 +259,8 @@ export class Tab extends EventEmitter {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 8000);
-      const res = await this.ctl.session.fetch(url, { signal: ctrl.signal, headers: { Accept: 'image/*' }, referrer: originOf(pageUrl) || undefined });
+      // No cookies: Electron's fetch would send all of them, SameSite=Strict included, wherever the page points its icon.
+      const res = await this.ctl.session.fetch(url, { signal: ctrl.signal, credentials: 'omit', headers: { Accept: 'image/*' }, referrer: originOf(pageUrl) || undefined });
       clearTimeout(timer);
       if (!res.ok) return;
       const type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
@@ -346,6 +353,19 @@ export class Tab extends EventEmitter {
       sep();
       if (/^https?:/.test(this.wc.getURL())) items.push({ label: 'View page source', click: () => this.ctl.newTab({ url: `view-source:${this.wc.getURL()}`, active: true, opener: this }) });
     }
+    for (const f of b.features) {
+      if (!f.contextMenuItems) continue;
+      try {
+        const extra = f.contextMenuItems(this, p) || [];
+        if (extra.length) {
+          sep();
+          items.push(...extra);
+        }
+      } catch (e) {
+        log.warn('context menu items failed', { feature: f.name, message: e.message });
+      }
+    }
+    sep();
     items.push({ label: 'Inspect', click: () => this.wc.inspectElement(p.x, p.y) });
     Menu.buildFromTemplate(items).popup({ window: this.ctl.win, frame: p.frame || undefined });
   }

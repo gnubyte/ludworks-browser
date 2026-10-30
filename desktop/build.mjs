@@ -86,6 +86,8 @@ export async function stage(out = path.join(DESKTOP, 'build', 'app')) {
   cpSync(path.join(REPO, 'src', 'lib'), path.join(out, 'lib'), { recursive: true, filter: (p) => !p.endsWith('browser.js') });
   mkdirSync(path.join(out, 'preload'), { recursive: true });
   copyFileSync(path.join(src, 'preload', 'shell.cjs'), path.join(out, 'preload', 'shell.cjs'));
+  // Chrome extension API additions (frames and service workers of extensions; see src/main/extensions/).
+  copyFileSync(path.join(src, 'preload', 'extensions.cjs'), path.join(out, 'preload', 'extensions.cjs'));
   // content.cjs = base (shortcuts, internal page API) + bundled page features (autofill, passkeys).
   let content = readFileSync(path.join(src, 'preload', 'content-base.cjs'), 'utf8');
   const featuresEntry = path.join(src, 'preload', 'features', 'index.js');

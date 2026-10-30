@@ -1,6 +1,7 @@
 // Settings.
 import { h, clear, applyTheme, sideNav, toggle } from './ui.js';
 import { blockerSection } from './settings-blocker.js';
+import { extensionsSection } from './settings-extensions.js';
 import { agentsSection } from './settings-agents.js';
 
 const app = document.getElementById('app');
@@ -131,6 +132,7 @@ async function render() {
       h('div', { class: 'setting', style: { flexWrap: 'wrap' } }, h('div', { class: 'grow' }, h('div', {}, 'Clear browsing data'), h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px' } }, label(what.history, 'History'), label(what.cookies, 'Cookies and site data'), label(what.cache, 'Cached files'), label(what.downloads, 'Download list'), label(what.permissions, 'Site permissions'))), clearRange, clearBtn),
     ),
     ...blockerSection(call),
+    ...extensionsSection(call),
     ...agentsSection(call),
     h('h2', { id: 'sites' }, 'Site permissions'),
     h('div', { class: 'card' }, permList),
@@ -138,6 +140,13 @@ async function render() {
       'downloads',
       'Downloads',
       setting('Ask where to save each file', null, toggle(prefs.askWhereToSave, (v) => set({ askWhereToSave: v }))),
+      setting('Show the save-pictures button', 'Counts the pictures and videos on a page; pick the ones you want and save them to a folder. Also on the page’s right-click menu.', toggle(prefs.mediaSaverButton, (v) => set({ mediaSaverButton: v }))),
+    ),
+    ...section(
+      'video',
+      'Picture in picture',
+      setting('Show the picture-in-picture button', 'Appears in the toolbar when a page has a video. Shortcut: Ctrl+Shift+P, or right-click a video.', toggle(prefs.pipButton, (v) => set({ pipButton: v }))),
+      setting('Automatic picture in picture', 'A playing video keeps playing in a floating window when you switch to another tab, and returns when you come back.', toggle(prefs.autoPip, (v) => set({ autoPip: v }))),
     ),
     ...section('import', 'Import data', ...importRows, setting('Import bookmarks from a file', 'HTML bookmark files from any browser, or Chrome/Edge "Bookmarks" JSON.', h('button', { class: 'btn', onclick: async (e) => { const r = await call('import.bookmarks.file'); if (r.ok && r.value) e.currentTarget.textContent = `Imported ${r.value.bookmarks}`; } }, 'Choose file…'))),
     ...section('system', 'System', setting('Use hardware acceleration', 'Takes effect after restarting the browser.', toggle(prefs.hardwareAcceleration, (v) => set({ hardwareAcceleration: v })))),

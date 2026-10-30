@@ -1,0 +1,61 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>React-like controlled inputs</title>
+<link rel="stylesheet" href="fixture.css">
+<style>.float label { transition: color 0.1s; } .float.focused label { color: #0969da; }</style>
+<h1>Sign in</h1>
+<div id="root"></div>
+<div id="status"></div>
+<script>
+  // A faithful imitation of how React handles controlled inputs (no network access needed):
+  //  * each <input> gets an own-property `value` accessor that records what was assigned through it
+  //    (React's inputValueTracking); assignments through that accessor are invisible to onChange,
+  //  * an 'input' event only reaches onChange when the DOM value differs from the tracked value,
+  //  * every render (state change: typing, but also focus / blur for the floating labels) writes the state
+  //    back into the DOM, so a value the "framework" never saw is wiped on the next render,
+  //  * the submit button is enabled from state, not from the DOM.
+  const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  const state = { username: '', password: '', focused: '', submitted: false };
+  const root = document.getElementById('root');
+  root.innerHTML = `<form class="card" id="form" novalidate>
+      <div class="float" data-for="username"><label for="username">Username or email</label><input id="username" name="username" autocomplete="username"></div>
+      <div class="float" data-for="password"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password"></div>
+      <button type="submit" id="submit" disabled>Continue</button>
+    </form>`;
+  const inputs = [...root.querySelectorAll('input')];
+  for (const node of inputs) {
+    let tracked = '';
+    Object.defineProperty(node, 'value', {
+      configurable: true,
+      get() { return nativeValue.get.call(this); },
+      set(v) { tracked = String(v); nativeValue.set.call(this, v); },
+    });
+    node._tracker = { get: () => tracked, set: (v) => { tracked = v; } };
+  }
+  function setState(patch) {
+    Object.assign(state, patch);
+    render();
+  }
+  function render() {
+    for (const node of inputs) {
+      if (node.value !== state[node.name]) node.value = state[node.name]; // controlled: state → DOM
+      node.parentElement.classList.toggle('focused', state.focused === node.name);
+    }
+    document.getElementById('submit').disabled = !(state.username && state.password);
+  }
+  root.addEventListener('input', (e) => {
+    const node = e.target;
+    const current = nativeValue.get.call(node);
+    if (current === node._tracker.get()) return; // value did not change as far as React knows
+    node._tracker.set(current);
+    setState({ [node.name]: current });
+  });
+  root.addEventListener('focusin', (e) => setState({ focused: e.target.name || '' }));
+  root.addEventListener('focusout', () => setState({ focused: '' }));
+  document.getElementById('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ u: state.username, p: state.password }) });
+    if ((await r.json()).ok) root.innerHTML = '<h2 id="welcome">Signed in</h2>';
+  });
+  render();
+</script>

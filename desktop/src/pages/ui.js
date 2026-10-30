@@ -75,6 +75,7 @@ export function sideNav(active) {
     ['bookmarks', 'Bookmarks'],
     ['history', 'History'],
     ['downloads', 'Downloads'],
+    ['extensions', 'Extensions'],
     ['sync', 'Ludworks sync'],
     ['about', 'About'],
   ];

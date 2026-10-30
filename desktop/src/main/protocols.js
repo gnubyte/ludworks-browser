@@ -27,7 +27,7 @@ const CSP_SHELL = "default-src 'none'; script-src 'self'; style-src 'self'; img-
 const CSP_PAGE = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /** Internal pages: ludworks://<page>/ → src/pages/<page>.html (and its assets). */
-export const INTERNAL_PAGES = Object.freeze(['newtab', 'settings', 'passwords', 'bookmarks', 'history', 'downloads', 'about', 'welcome', 'sync']);
+export const INTERNAL_PAGES = Object.freeze(['newtab', 'settings', 'passwords', 'bookmarks', 'history', 'downloads', 'about', 'welcome', 'sync', 'extensions']);
 
 const notFound = () => new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
 

@@ -20,6 +20,7 @@ import { log } from './util/log.js';
 import { APP_NAME } from './paths.js';
 import { DefaultBrowser } from './default-browser.js';
 import { WebRequestHub } from './webrequest.js';
+import { tabWebPreferences } from './tab.js';
 import { TabDrag, cleanStrip } from './tab-drag.js';
 
 const NEWTAB = 'ludworks://newtab/';
@@ -76,10 +77,19 @@ export class Browser {
     const { Privacy } = await import('./privacy/privacy.js');
     this.privacy = new Privacy(this);
     this.registerFeature(this.privacy);
+    const { Pip } = await import('./pip.js');
+    this.pip = new Pip(this);
+    this.registerFeature(this.pip);
     setInterval(() => this.privacy.sweep(new Set(allWebContents.getAllWebContents().map((w) => w.id))), 60 * 1000).unref();
     const { Blocker } = await import('./blocker/blocker.js');
     this.blocker = new Blocker(this);
     this.registerFeature(this.blocker);
+    const { MediaSaver } = await import('./media/media.js');
+    this.media = new MediaSaver(this);
+    this.registerFeature(this.media);
+    const { Extensions } = await import('./extensions/extensions.js');
+    this.extensions = new Extensions(this);
+    this.registerFeature(this.extensions);
     const { AgentHub } = await import('./agent/agent.js');
     this.agent = new AgentHub(this);
     this.registerFeature(this.agent);
@@ -91,7 +101,8 @@ export class Browser {
     nativeTheme.on('updated', () => this.forEachWindow((w) => w.applyTheme()));
 
     this.startEngineComponents();
-    await this.blocker.whenReady(1500); // cached filters in place before restored tabs load
+    // cached filters in place and extensions loaded (content scripts) before restored tabs load
+    await Promise.all([this.blocker.whenReady(1500), this.extensions.whenReady(2500)]);
     const restored = this.prefs.get('startup') === 'restore' ? this.restoreSession() : 0;
     const urls = [...this.urlsFromArgv(argv), ...earlyUrls];
     const firstRun = !this.db.getMeta('welcomed', false);
@@ -131,6 +142,11 @@ export class Browser {
   setupSession(ses, { isPrivate }) {
     ses.setUserAgent(this.ua);
     registerProtocols(ses, this.appDir, { shell: false, pages: true });
+    // The content preload runs in every frame of every page of this session: tabs, and the tabs and popups
+    // pages open with window.open / target=_blank (Electron ignores a webPreferences preload for those).
+    const preload = { type: 'frame', id: 'ludworks-content', filePath: this.paths.contentPreload };
+    if (typeof ses.registerPreloadScript === 'function') ses.registerPreloadScript(preload);
+    else ses.setPreloads([preload.filePath]);
     ses.setPermissionRequestHandler((wc, permission, callback, details) => this.onPermissionRequest(wc, permission, callback, details));
     ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => this.onPermissionCheck(wc, permission, requestingOrigin, details));
     ses.setDevicePermissionHandler(() => false);
@@ -438,7 +454,10 @@ export class Browser {
   /** window.open / target=_blank / middle-click from a page. */
   handleWindowOpen(tab, details) {
     const { url, disposition } = details;
-    if (!/^(https?|ftp|about|data|blob|file|ludworks):/i.test(url)) {
+    // Pages of installed extensions may be opened too (Chromium itself enforces web_accessible_resources
+    // on the new window's navigation, which stays renderer-initiated from the opener).
+    const extensionPage = /^chrome-extension:/i.test(url) && !!this.extensions && this.extensions.isInstalledUrl(url);
+    if (!extensionPage && !/^(https?|ftp|about|data|blob|file|ludworks):/i.test(url)) {
       // External protocols go through the openExternal permission flow via a navigation.
       return { action: 'deny' };
     }
@@ -452,9 +471,14 @@ export class Browser {
       else ctl.newTab({ url, active: !background, opener: tab });
       return { action: 'deny' };
     }
+    // Electron gives window.open / target=_blank children only the opener's security preferences; give them
+    // the tab preferences (iframes running the session's content preload, autoplay policy, spell check...).
+    // Same session as the opener, so `session` is left out.
+    const { session: _ses, ...childPrefs } = tabWebPreferences({ session: null, spellcheck: this.prefs.get('spellcheck') });
     return {
       action: 'allow',
       outlivesOpener: true,
+      overrideBrowserWindowOptions: { webPreferences: childPrefs },
       createWindow: (options) => {
         if (disposition === 'new-window' && details.features) {
           // Sized popups (OAuth, payment): their own window, sized as the page asked (plus our toolbar).
@@ -611,8 +635,24 @@ export class Browser {
   }
 
   togglePictureInPicture(tab, p) {
-    const js = `(() => { const v = document.elementFromPoint(${Number(p.x)}, ${Number(p.y)}); const vid = v && (v.tagName === 'VIDEO' ? v : v.closest && v.closest('video')); if (!vid) return; if (document.pictureInPictureElement) document.exitPictureInPicture(); else vid.requestPictureInPicture(); })()`;
-    tab.wc.executeJavaScript(js, true).catch(() => {});
+    return this.pip.toggleAt(tab, p);
+  }
+
+  /** A tab was created (any window): features may watch its web contents (Feature.attachTab). */
+  onTabCreated(tab) {
+    for (const f of this.features) {
+      if (!f.attachTab) continue;
+      try {
+        f.attachTab(tab);
+      } catch (e) {
+        log.warn('attachTab failed', { feature: f.name, message: e.message });
+      }
+    }
+  }
+
+  /** The active tab of a window changed from `from` to `to` (Feature.onTabSwitch). */
+  onTabSwitch(ctl, from, to) {
+    for (const f of this.features) if (f.onTabSwitch) Promise.resolve(f.onTabSwitch(ctl, from, to)).catch((e) => log.warn('onTabSwitch failed', { feature: f.name, message: e.message }));
   }
 
   /** Every live tab (tabs of closing windows and closed web contents are left out). */
@@ -769,6 +809,7 @@ export class Browser {
       case 'settings':
       case 'passwords':
       case 'about':
+      case 'extensions':
         this.openInternal(ctl, cmd);
         break;
       case 'clearData': {
@@ -781,6 +822,9 @@ export class Browser {
         break;
       case 'toggleFullscreen':
         ctl.win.setFullScreen(!ctl.win.isFullScreen());
+        break;
+      case 'pictureInPicture':
+        if (ctl.activeTab()) this.pip.toggle(ctl.activeTab()).catch(() => {});
         break;
       case 'menu':
         ctl.shell.focus();
@@ -961,7 +1005,12 @@ export class Browser {
    * Adds a feature module (content blocker, privacy badges, ...). Every hook is optional:
    *   name                                   unique id
    *   attachSession(ses, hub, {isPrivate})   called for every browsing session (default and private), hub = WebRequestHub
-   *   toolbarButtons(ctl, tab)               → [{id, order?, icon, title, badge?, tone?: 'accent'|'warn'|'muted', pressed?, popup: {kind, width?}}]
+   *   toolbarButtons(ctl, tab)               → [{id, order?, icon | image (data: URL), title, badge?, badgeColor?, tone?: 'accent'|'warn'|'muted',
+   *                                              pressed?, popup?: {kind, width?}}] — without popup a click calls onButton
+   *   onButton(ctl, id, anchor, {menu})       a click on a button without popup, or a right-click on any of its buttons
+   *   contextMenuItems(tab, params)          → extra Electron menu items for the page context menu (above Inspect)
+   *   attachTab(tab)                         every new tab (its web contents events)
+   *   onTabSwitch(ctl, from, to)             the active tab of a window changed
    *   popups: [kind, ...]                    popup kinds it renders (shell/overlay-<feature>.js) and handles:
    *   openPopup(ctl, kind, anchor, data)     → ctl.showPopup(kind, data, {...anchor, width})
    *   popupAction(ctl, kind, action, data)
@@ -979,7 +1028,7 @@ export class Browser {
     for (const f of this.features) {
       if (!f.toolbarButtons) continue;
       try {
-        out.push(...(f.toolbarButtons(ctl, tab) || []));
+        out.push(...(f.toolbarButtons(ctl, tab) || []).map((b) => ({ ...b, feature: f.name })));
       } catch (e) {
         log.warn('toolbar buttons failed', { feature: f.name, message: e.message });
       }
@@ -1209,6 +1258,12 @@ export class Browser {
       case 'downloads.seen':
         this.downloads.markSeen();
         return null;
+      case 'feature.button': {
+        // A feature toolbar button without a popup was clicked, or one was right-clicked (a.menu).
+        const f = this.features.find((x) => x.name === a.feature);
+        if (!f || !f.onButton) return null;
+        return f.onButton(ctl, String(a.id || ''), a.anchor || {}, { menu: !!a.menu });
+      }
       default:
         if (cmd.startsWith('account.') || cmd.startsWith('vault.')) return this.account.shellCommand(ctl, cmd, a);
         if (cmd.startsWith('autofill.')) return this.autofill.shellCommand(ctl, cmd, a);

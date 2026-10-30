@@ -3,6 +3,8 @@ import { icon, h, clear, faviconEl } from './icons.js';
 import { POPUPS as ACCOUNT_POPUPS } from './overlay-account.js';
 import { POPUPS as BLOCKER_POPUPS } from './overlay-blocker.js';
 import { POPUPS as PRIVACY_POPUPS } from './overlay-privacy.js';
+import { POPUPS as MEDIA_POPUPS } from './overlay-media.js';
+import { POPUPS as EXTENSIONS_POPUPS } from './overlay-extensions.js';
 import { POPUPS as AGENT_POPUPS } from './overlay-agents.js';
 
 const rootEl = document.getElementById('root');
@@ -88,6 +90,7 @@ const POPUPS = {
         item('History', 'history', `${mod}H`, 'history'),
         item('Downloads', 'downloads', `${mod}J`, 'download'),
         item('Bookmarks', 'bookmarks', `${mod}Shift+O`, 'star'),
+        item('Extensions', 'extensions', null, 'puzzle'),
         h('div', { class: 'sep' }),
         h(
           'div',
@@ -473,6 +476,8 @@ const POPUPS = {
   ...ACCOUNT_POPUPS,
   ...BLOCKER_POPUPS,
   ...PRIVACY_POPUPS,
+  ...MEDIA_POPUPS,
+  ...EXTENSIONS_POPUPS,
   ...AGENT_POPUPS,
 };
 
@@ -492,6 +497,7 @@ window.lw.on('popup', (p) => {
   html.dataset.theme = p.theme;
   rootEl.className = p.modal ? 'modal' : '';
   rootEl.style.width = p.modal ? '' : `${p.width + 36}px`; // card width + #root side padding
+  rootEl.style.setProperty('--popup-max-h', p.maxHeight ? `${p.maxHeight}px` : ''); // room below the anchor (.popup.fit)
   const build = POPUPS[p.kind];
   if (!build) return;
   const el = build(p.data, ctx, { act: (a, d) => act(p.kind, a, d), close: () => close(p.kind), call });

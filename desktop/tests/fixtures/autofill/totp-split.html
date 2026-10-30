@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Verification code (split boxes)</title>
+<link rel="stylesheet" href="fixture.css">
+<h1>Enter the code</h1>
+<p>Six one-character boxes, like most banks, Steam or many sign-in flows. Typing a digit moves to the next box.</p>
+<form class="card" method="post" action="/verify" id="split">
+  <div style="display: flex; gap: 8px">
+    <input aria-label="Digit 1" maxlength="1" inputmode="numeric" autocomplete="one-time-code" style="width: 44px; text-align: center">
+    <input aria-label="Digit 2" maxlength="1" inputmode="numeric" style="width: 44px; text-align: center">
+    <input aria-label="Digit 3" maxlength="1" inputmode="numeric" style="width: 44px; text-align: center">
+    <input aria-label="Digit 4" maxlength="1" inputmode="numeric" style="width: 44px; text-align: center">
+    <input aria-label="Digit 5" maxlength="1" inputmode="numeric" style="width: 44px; text-align: center">
+    <input aria-label="Digit 6" maxlength="1" inputmode="numeric" style="width: 44px; text-align: center">
+  </div>
+  <button type="submit" id="verify">Verify</button>
+</form>
+<script>
+  const boxes = [...document.querySelectorAll('#split input')];
+  boxes.forEach((b, i) => b.addEventListener('input', () => b.value && boxes[i + 1] && boxes[i + 1].focus()));
+</script>

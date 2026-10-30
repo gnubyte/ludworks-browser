@@ -13,6 +13,7 @@ test('shortcuts: browser-reserved vs page-first', () => {
   assert.equal(resolveShortcut(key('w', { [primary]: true })).reserved, true);
   assert.deepEqual(resolveShortcut(key('3', { [primary]: true })), { cmd: 'selectTab', arg: 2, reserved: true });
   assert.equal(resolveShortcut(key('T', { [primary]: true, shift: true })).cmd, 'reopenTab');
+  assert.deepEqual(resolveShortcut(key('P', { [primary]: true, shift: true })), { cmd: 'pictureInPicture', arg: undefined, reserved: false });
   // pages see these first (web apps may bind them)
   for (const k of ['f', 's', 'p', 'd', '=', '-', '0']) assert.equal(resolveShortcut(key(k, { [primary]: true })).reserved, false, k);
   assert.equal(resolveShortcut(key('F5')).cmd, 'reload');

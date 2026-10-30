@@ -19,6 +19,10 @@ import { log } from '../util/log.js';
 const VAULT_SCOPES = ['vault:read', 'vault:write'];
 const TOKEN_DAYS = 180;
 const SYNC_EVERY_MS = 5 * 60 * 1000;
+// A server without the browser-sync module is asked again after this long (or on "Sync now"), so a
+// server update is picked up without restarting the browser.
+const BROWSER_SYNC_RECHECK_MS = 30 * 60 * 1000;
+const BROWSER_SYNC_MISSING = 'This Ludworks server cannot sync bookmarks, history, tabs and settings yet — update the server. Passwords and passkeys sync normally.';
 const OFFLINE = new Set(['network_error', 'timeout']);
 
 function err(code, message, extra = {}) {
@@ -43,6 +47,7 @@ export class Account {
     this.vault = new VaultStore({ dir: this.dir, api: () => this.api() });
     this.sync = new BrowserSync({ browser, api: () => this.api() });
     this.status = { syncing: false, lastSyncAt: null, error: null, warning: null };
+    this.browserSyncMissingAt = 0; // when the server last answered 404 for browser sync (0 = ask it)
     this.vault.on('key-changed', () => this.onKeyChanged());
     this.vault.on('locked', () => this.changed());
     this.vault.on('unlocked', () => this.changed());
@@ -184,22 +189,25 @@ export class Account {
     }
   }
 
-  async syncNow() {
+  /** @param {{manual?: boolean}} [opts] manual: the user asked ("Sync now"), so re-ask a server that lacked browser sync */
+  async syncNow({ manual = false } = {}) {
     if (!this.acc) throw err('not_logged_in', 'Not signed in.');
     if (this.status.syncing) return this.summary();
     this.status.syncing = true;
     this.changed();
     try {
       await this.vault.sync(this.acc);
-      if (this.vault.isUnlocked() && this.sync.ready() && !this.browserSyncUnsupported) {
+      const askBrowserSync = manual || !this.browserSyncMissingAt || Date.now() - this.browserSyncMissingAt >= BROWSER_SYNC_RECHECK_MS;
+      if (this.vault.isUnlocked() && this.sync.ready() && askBrowserSync) {
         try {
           await this.sync.sync();
+          this.resetBrowserSyncCheck();
         } catch (e) {
           // Servers older than the browser-sync module (API.md §16) answer 404: passwords and passkeys
           // still sync through the vault; bookmarks/history/tabs/settings stay local until the update.
           if (!(e instanceof ApiError && e.status === 404)) throw e;
-          this.browserSyncUnsupported = true;
-          this.status.warning = 'This Ludworks server cannot sync bookmarks, history, tabs and settings yet — update the server. Passwords and passkeys sync normally.';
+          this.browserSyncMissingAt = Date.now();
+          this.status.warning = BROWSER_SYNC_MISSING;
         }
       }
       this.status.lastSyncAt = Date.now();
@@ -251,6 +259,13 @@ export class Account {
     writeSecret(this.keyFile, null);
     writeSecret(this.accountFile, null);
     this.acc = null;
+    this.resetBrowserSyncCheck();
+  }
+
+  /** Forget that the server lacked browser sync (it was updated, or this is another account/server). */
+  resetBrowserSyncCheck() {
+    this.browserSyncMissingAt = 0;
+    if (this.status.warning === BROWSER_SYNC_MISSING) this.status.warning = null;
   }
 
   // ------------------------------------------------------------------------- server identity
@@ -343,6 +358,7 @@ export class Account {
     if (this.acc.pin) this.b.pinnedHosts.set(probe.host, this.acc.pin);
     this.saveAccount();
     this.status.error = null;
+    this.resetBrowserSyncCheck();
     try {
       await this.vault.refreshMeta(this.acc);
     } catch (e) {
@@ -478,7 +494,7 @@ export class Account {
       case 'account.lock':
         return this.lock({ forget: true });
       case 'account.sync':
-        return this.syncNow();
+        return this.syncNow({ manual: true });
       case 'account.open':
         if (ctl) this.b.openInternal(ctl, a.page === 'sync' ? 'sync' : 'passwords');
         if (ctl) ctl.hidePopup('account');
