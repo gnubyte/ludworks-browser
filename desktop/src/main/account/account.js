@@ -4,6 +4,7 @@
 
 import { app, powerMonitor } from 'electron';
 import path from 'node:path';
+import { X509Certificate } from 'node:crypto';
 import os from 'node:os';
 import * as vc from '../../lib/vault-crypto.js';
 import { ApiError, normalizeServerUrl } from '../../lib/api.js';
@@ -30,6 +31,18 @@ const CERT_CHECK_MS = 6 * 60 * 60 * 1000;
 
 function err(code, message, extra = {}) {
   return new ApiError({ code, message, ...extra });
+}
+
+/** The fingerprint of a presented certificate when it is self-signed (subject = issuer), else null. */
+export function selfSignedFp(seen) {
+  if (!seen || !seen.pem || !seen.fingerprint) return null;
+  try {
+    const x = new X509Certificate(seen.pem);
+    // verify(), not checkIssued(): a Ludworks leaf has no certSign key usage, so checkIssued says no.
+    return x.subject === x.issuer && x.verify(x.publicKey) ? seen.fingerprint : null;
+  } catch {
+    return null;
+  }
 }
 
 function errorInfo(e) {
@@ -343,13 +356,16 @@ export class Account {
   }
 
   /** The signed-in server presents a certificate that is neither the pinned one nor its announced renewal. */
+  // Also without a pin: an account signed in while Windows trusted the server's (self-signed) certificate
+  // has none, and when the server then switches to a certificate Windows does not know, this is the
+  // only way back in short of signing in again.
   changedCertificate() {
     const acc = this.acc;
-    if (!acc || !acc.pin) return null;
+    if (!acc) return null;
     const host = new URL(acc.serverUrl).hostname;
     const seen = this.transport.lastSeen(host);
     if (!seen || seen.trusted || !seen.fingerprint || seen.fingerprint === acc.pin || seen.fingerprint === acc.nextPin) return null;
-    return { serverUrl: acc.serverUrl, host, trust: 'changed', fingerprint: formatFp(seen.fingerprint), fingerprintHex: seen.fingerprint, pinned: formatFp(acc.pin) };
+    return { serverUrl: acc.serverUrl, host, trust: 'changed', fingerprint: formatFp(seen.fingerprint), fingerprintHex: seen.fingerprint, pinned: acc.pin ? formatFp(acc.pin) : null };
   }
 
   /**
@@ -461,7 +477,10 @@ export class Account {
       expiresAt: typeof pat.expires_at === 'string' ? pat.expires_at : null,
       user,
       serverName: probe.serverName,
-      pin: probe.trust === 'pinned' ? this.transport.pins.get(probe.host) || null : null,
+      // A self-signed certificate is pinned even when Windows trusts it (someone added it there), so a
+      // later change of certificate is caught and offered for confirmation; public CA certificates renew
+      // freely and are not pinned.
+      pin: probe.trust === 'pinned' ? this.transport.pins.get(probe.host) || null : probe.trust === 'ca' ? selfSignedFp(this.transport.lastSeen(probe.host)) : null,
       signedInAt: new Date().toISOString(),
     };
     if (this.acc.pin) this.b.pinnedHosts.set(probe.host, this.acc.pin);

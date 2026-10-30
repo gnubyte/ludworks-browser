@@ -177,7 +177,7 @@ function certChangedNotice(s, rerender) {
     { class: 'stack' },
     h('div', { class: 'notice warn' }, 'The server presents a new certificate. Only confirm it if you know the server changed it (an update or a renewal).'),
     h('div', { class: 'field' }, h('span', {}, 'New SHA-256 fingerprint'), h('div', { class: 'mono' }, c.fingerprint)),
-    h('div', { class: 'field' }, h('span', {}, 'Fingerprint you trusted before'), h('div', { class: 'mono' }, c.pinned)),
+    c.pinned ? h('div', { class: 'field' }, h('span', {}, 'Fingerprint you trusted before'), h('div', { class: 'mono' }, c.pinned)) : h('div', { class: 'sub' }, 'Before, Windows trusted the server’s previous certificate; it does not know this one.'),
     err.el,
     h('button', { class: 'btn primary', onclick: async (e) => { const r = await run('account.trust', { serverUrl: c.serverUrl, fingerprint: c.fingerprintHex }, err, e.currentTarget); if (r) { const s2 = await call('account.summary', {}); if (s2 && s2.ok) rerender(s2.value); } } }, 'The new fingerprint matches — trust it'),
   );
