@@ -93,3 +93,11 @@ form.stack { padding: 6px 16px 4px; }
 .pv-done { padding-top: 0; }
 .pv-range .t { font-weight: 550; }
 .btn.small { height: 26px; padding: 0 10px; font-size: 12px; }
+/* key popup: one-time (MFA) code chip — the ring empties as the code runs out */
+.btn.totp { gap: 6px; padding: 0 8px; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; flex: none; }
+.btn.totp .totp-code { min-width: 7ch; text-align: left; }
+.totp-ring { width: 12px; height: 12px; border-radius: 50%; flex: none; background: conic-gradient(var(--accent) var(--p, 360deg), var(--active) 0); }
+.btn.totp.expiring .totp-ring { background: conic-gradient(#d9822b var(--p, 360deg), var(--active) 0); }
+.btn.totp.expiring .totp-code { color: #d9822b; }
+.btn.totp.copied, .icon-btn.copied { color: var(--ok); }
+.btn.totp.copied .totp-ring { background: var(--ok); }
