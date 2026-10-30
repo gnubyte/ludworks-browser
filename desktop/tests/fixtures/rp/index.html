@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ludworks test relying party</title>
+  <script type="module" src="rp.js"></script>
+</head>
+<body>
+  <h1>Test login</h1>
+  <form id="login" action="/login" method="post">
+    <label>Email <input id="user" name="username" type="email" autocomplete="username webauthn"></label>
+    <label>Password <input id="pass" name="password" type="password" autocomplete="current-password"></label>
+    <button type="submit">Sign in</button>
+  </form>
+  <p><button id="reg" type="button">Register passkey</button> <button id="auth" type="button">Sign in with passkey</button></p>
+  <pre id="out"></pre>
+</body>
+</html>

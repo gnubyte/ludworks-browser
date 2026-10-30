@@ -1,0 +1,134 @@
+html, body { background: var(--frame); overflow: hidden; user-select: none; }
+#chrome { display: flex; flex-direction: column; }
+
+/* ---------------------------------------------------------------- tab strip */
+#tabstrip {
+  height: 40px; display: flex; align-items: flex-end; padding: 0 0 0 8px; gap: 2px;
+  -webkit-app-region: drag; position: relative;
+}
+:root[data-platform="darwin"] #tabstrip { padding-left: 80px; }
+:root[data-platform="darwin"][data-fullscreen="true"] #tabstrip { padding-left: 8px; }
+#tabs { display: flex; align-items: flex-end; min-width: 0; flex: 0 1 auto; height: 100%; gap: 0; }
+#drag-spacer { flex: 1 1 0; min-width: 40px; height: 100%; }
+#wincontrols { width: var(--wco-width, 140px); flex: none; height: 100%; }
+#newtab { -webkit-app-region: no-drag; margin: 0 2px 4px 4px; width: 30px; height: 30px; border-radius: 8px; }
+
+.tab {
+  -webkit-app-region: no-drag; position: relative; height: 34px; flex: 1 1 220px; min-width: 52px; max-width: 232px;
+  display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border-radius: 10px 10px 0 0;
+  color: var(--muted); cursor: default; transition: background-color 120ms;
+}
+.tab.pinned { flex: 0 0 44px; min-width: 44px; max-width: 44px; padding: 0; justify-content: center; }
+.tab::after { content: ""; position: absolute; right: 0; top: 9px; height: 16px; width: 1px; background: var(--border); }
+.tab.active::after, .tab:has(+ .tab.active)::after, .tab:hover::after, .tab:has(+ .tab:hover)::after, .tab:last-child::after { display: none; }
+.tab:hover:not(.active) { background: var(--hover); border-radius: 8px; height: 30px; margin-bottom: 4px; }
+.tab.active { background: var(--toolbar); color: var(--text); z-index: 1; }
+.tab.active::before, .tab.active > .curve-r {
+  content: ""; position: absolute; bottom: 0; width: 10px; height: 10px; pointer-events: none;
+}
+.tab.active::before { left: -10px; background: radial-gradient(circle at 0 0, transparent 9.5px, var(--toolbar) 10px); }
+.tab.active > .curve-r { right: -10px; background: radial-gradient(circle at 100% 0, transparent 9.5px, var(--toolbar) 10px); }
+.tab .title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 12.5px; mask-image: linear-gradient(90deg, #000 85%, transparent); }
+.tab.pinned .title, .tab.pinned .close { display: none; }
+.tab .close { width: 20px; height: 20px; border-radius: 50%; border: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--muted); flex: none; opacity: 0; }
+.tab:hover .close, .tab.active .close { opacity: 1; }
+.tab .close:hover { background: var(--active); color: var(--text); }
+.tab .audio { width: 18px; height: 18px; border: 0; padding: 0; background: transparent; color: var(--muted); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.tab .audio:hover { background: var(--hover); color: var(--text); }
+.tab.narrow { padding: 0 4px; justify-content: center; gap: 0; }
+.tab.narrow .title, .tab.narrow .audio { display: none; }
+.tab.narrow:not(.active) .close { display: none; }
+.tab.crashed .title { color: var(--danger); }
+.tab.dragging { opacity: 0.6; }
+/* where a dragged tab lands (this strip's own tabs, or one dragged in from another window) */
+#tab-drop { position: absolute; top: 9px; bottom: 5px; width: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; z-index: 3; }
+.spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 0.8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ------------------------------------------------------------------ toolbar */
+#toolbar { height: 44px; background: var(--toolbar); display: flex; align-items: center; gap: 4px; padding: 0 8px; }
+#omnibox {
+  flex: 1 1 auto; min-width: 120px; height: 34px; display: flex; align-items: center; gap: 2px; padding: 0 4px;
+  background: var(--omni); border-radius: 17px; border: 1px solid transparent; margin: 0 4px;
+}
+#omnibox:hover { background: color-mix(in srgb, var(--omni) 85%, var(--text) 6%); }
+#omnibox.focused { background: var(--omni-focus); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+#url { flex: 1 1 auto; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; font-size: 14px; padding: 0 6px; user-select: text; }
+#url::placeholder { color: var(--faint); }
+#url::selection { background: var(--accent-soft); }
+.omni-chip { height: 26px; min-width: 26px; padding: 0 6px; border-radius: 13px; border: 0; background: transparent; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; font-size: 12px; flex: none; }
+.omni-chip:hover { background: var(--hover); color: var(--text); }
+#siteinfo.insecure, #siteinfo.dangerous { color: var(--danger); }
+#siteinfo.insecure:hover, #siteinfo.dangerous:hover { background: var(--danger-soft); }
+#siteinfo .label { font-weight: 600; }
+#star.on { color: var(--accent); }
+#star.on svg path { fill: currentColor; }
+#key.on { color: var(--accent); }
+#key.locked { color: var(--muted); }
+#zoom-chip { font-variant-numeric: tabular-nums; }
+.account-btn .avatar { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: inline-flex; align-items: center; justify-content: center; font-weight: 650; font-size: 12px; }
+.account-btn .avatar.locked { background: var(--surface-2); color: var(--muted); box-shadow: inset 0 0 0 1.5px var(--accent); }
+#downloads { position: relative; }
+#downloads .ring { position: absolute; inset: 3px; border-radius: 50%; pointer-events: none; }
+#downloads.pulse { animation: pulse 0.9s ease-out 2; }
+@keyframes pulse { 50% { background: var(--accent-soft); color: var(--accent); } }
+.badge { position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+/* Feature buttons (content blocker, tracking cookies, clear history): icon + small count badge. */
+#feature-buttons { display: flex; align-items: center; gap: 2px; }
+#feature-buttons .feature { position: relative; }
+#feature-buttons .feature.on { color: var(--accent); }
+#feature-buttons .feature.tone-muted { color: var(--faint); }
+#feature-buttons .feature.tone-warn { color: var(--danger); }
+#feature-buttons .count { position: absolute; right: 0; bottom: 1px; min-width: 15px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--accent); color: var(--on-accent); font-size: 9.5px; font-weight: 700; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums; pointer-events: none; box-shadow: 0 0 0 1.5px var(--toolbar); }
+#feature-buttons .feature.tone-warn .count { background: var(--danger); }
+#feature-buttons .feature.tone-muted .count { background: var(--surface-2); color: var(--muted); }
+
+/* ------------------------------------------------------------ bookmarks bar */
+#bookmarks-bar { position: relative; height: 30px; background: var(--toolbar); display: flex; align-items: center; gap: 2px; padding: 0 8px 2px; overflow: hidden; border-bottom: 1px solid var(--border); }
+#bookmarks-bar .bm-items { position: relative; display: flex; align-items: center; gap: 2px; flex: 1 1 auto; min-width: 0; height: 100%; overflow: hidden; }
+#bookmarks-bar .bm { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 13px; border: 0; background: transparent; color: var(--text); font-size: 12px; max-width: 200px; flex: none; }
+#bookmarks-bar .bm:hover { background: var(--hover); }
+#bookmarks-bar .bm:focus-visible, #bookmarks-bar .bm-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#bookmarks-bar .bm .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#bookmarks-bar .bm.folder > .icon { color: var(--muted); flex: none; }
+#bookmarks-bar .bm.over { display: none; } /* in the » menu */
+#bookmarks-bar .bm.dragging { opacity: 0.4; }
+#bookmarks-bar .drop-into { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+#bookmarks-bar .drop-into > .icon { color: var(--accent); }
+#bookmarks-bar .bm-more { flex: none; width: 28px; height: 26px; border-radius: 13px; border: 0; padding: 0; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+#bookmarks-bar .bm-more:hover { background: var(--hover); color: var(--text); }
+#bookmarks-bar .bm-drop { position: absolute; top: 4px; bottom: 6px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--accent); pointer-events: none; }
+#bookmarks-bar .empty { color: var(--faint); font-size: 12px; padding: 0 6px; white-space: nowrap; }
+#bookmarks-bar.drop-empty .empty { color: var(--accent); }
+#chrome.no-bar #toolbar { border-bottom: 1px solid var(--border); }
+
+/* ------------------------------------------------------------------ findbar */
+#findbar { height: 40px; background: var(--toolbar); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 0 12px; }
+#find-input { width: 260px; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); outline: none; user-select: text; }
+#find-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+#find-input.nomatch { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+#find-count { min-width: 64px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; margin-right: 4px; }
+
+/* --------------------------------------------------------- fullscreen mode */
+:root[data-htmlfs="true"] #chrome { display: none; }
+#key.capture { color: var(--accent); background: var(--accent-soft); }
+#feature-buttons .feature-img { width: 18px; height: 18px; object-fit: contain; }
+
+/* ------------------------------------------------------------- AI agent windows (shell.js renderAgent) */
+:root { --agent: #7c3aed; --agent-2: #a78bfa; }
+:root[data-agent="true"], :root[data-agent="true"] body { background: var(--agent); }
+:root[data-agent="true"] #chrome { background: var(--frame); }
+:root[data-agent-busy="true"], :root[data-agent-busy="true"] body { animation: agent-glow 1.6s ease-in-out infinite; }
+@keyframes agent-glow { 50% { background: var(--agent-2); } }
+#agent-bar {
+  display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 12px; background: var(--agent); color: #fff;
+  font-size: 12.5px; -webkit-app-region: no-drag;
+}
+#agent-bar .who { font-weight: 650; }
+#agent-bar .what { opacity: 0.9; }
+#agent-bar .grow { flex: 1; }
+#agent-bar .agent-btn { height: 22px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.55); background: transparent; color: #fff; font: inherit; cursor: pointer; }
+#agent-bar .agent-btn:hover { background: rgba(255, 255, 255, 0.18); }
+:root[data-agent-busy="true"] #agent-bar { animation: agent-glow 1.6s ease-in-out infinite; }
+.tab.agent::after { display: block; content: ""; position: absolute; left: 8px; right: 8px; top: auto; bottom: 0; height: 2px; width: auto; border-radius: 2px; background: var(--agent); }

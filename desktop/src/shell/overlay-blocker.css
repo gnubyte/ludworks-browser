@@ -1,0 +1,30 @@
+/* Content blocker popup (overlay-blocker.js). */
+.blocker .head .grow { min-width: 0; }
+.bk-ic { width: 32px; height: 32px; border-radius: 9px; background: var(--surface-2); color: var(--faint); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.bk-ic.on { background: var(--accent-soft); color: var(--accent); }
+.bk-site { display: flex; align-items: center; gap: 12px; margin: 6px 10px 4px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
+.bk-site .t { font-weight: 600; }
+.bk-site .s { color: var(--muted); font-size: 12px; }
+.bk-switch { position: relative; width: 40px; height: 22px; flex: none; }
+.bk-switch input { opacity: 0; width: 100%; height: 100%; position: absolute; inset: 0; margin: 0; }
+.bk-switch span { position: absolute; inset: 0; border-radius: 11px; background: var(--border); transition: background 120ms; pointer-events: none; }
+.bk-switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 120ms; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+.bk-switch input:checked + span { background: var(--accent); }
+.bk-switch input:checked + span::after { transform: translateX(18px); }
+.bk-switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bk-tight { padding-top: 4px; padding-bottom: 4px; }
+.bk-reload { display: flex; align-items: center; gap: 8px; }
+.bk-stats { display: flex; gap: 8px; padding: 8px 16px 2px; }
+.bk-stat { flex: 1; min-width: 0; }
+.bk-stat .n { font-size: 22px; font-weight: 680; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.bk-stat .s { color: var(--muted); font-size: 12px; }
+.bk-cos { padding: 2px 16px 6px; color: var(--muted); font-size: 12px; }
+.bk-label { padding: 8px 16px 0; color: var(--faint); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.bk-list { max-height: 260px; overflow: auto; padding-top: 2px; }
+.bk-row { min-height: 38px; }
+.bk-count { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 600; }
+.bk-more { display: block; margin: 0 16px; padding: 4px 0; border: 0; background: transparent; color: var(--accent); font-size: 12.5px; cursor: default; }
+.bk-more:hover { text-decoration: underline; }
+.bk-foot { align-items: center; border-top: 1px solid var(--border); margin-top: 8px; padding-top: 10px; }
+.bk-foot .grow { flex: 1; }
+.blocker .btn.small { height: 26px; padding: 0 10px; font-size: 12px; }

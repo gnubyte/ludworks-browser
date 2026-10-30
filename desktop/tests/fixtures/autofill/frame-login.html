@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Framed sign-in</title>
+<link rel="stylesheet" href="fixture.css">
+<style>body { margin: 16px; max-width: none; }</style>
+<form method="post" action="/login" id="form">
+  <label for="account_name_text_field">Email or Phone Number</label>
+  <input id="account_name_text_field" type="text" autocomplete="username" name="accountName">
+  <label for="password_text_field">Password</label>
+  <input id="password_text_field" type="password" autocomplete="current-password" name="password">
+  <button type="submit" id="sign-in">Sign In</button>
+</form>

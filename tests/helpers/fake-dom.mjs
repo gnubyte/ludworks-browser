@@ -61,12 +61,24 @@ export class FakeElement {
   append(...kids) {
     for (const k of kids) {
       k.parentElement = this;
+      k.parentNode = this;
       this.children.push(k);
     }
     return this;
   }
+  /** Open shadow root (closed: reachable only through the returned object, like the real DOM). */
+  attachShadow({ mode = 'open' } = {}) {
+    const root = new FakeShadowRoot(this);
+    if (mode === 'open') this.shadowRoot = root;
+    return root;
+  }
+  /** Composed-tree parent (through shadow roots to their host): what rendering depends on. */
+  composedParent() {
+    if (this.parentElement) return this.parentElement;
+    return this.parentNode && this.parentNode.host ? this.parentNode.host : null;
+  }
   displayed() {
-    for (let n = this; n; n = n.parentElement) if (n.style.display === 'none') return false;
+    for (let n = this; n; n = n.composedParent()) if (n.style.display === 'none') return false;
     return true;
   }
   getClientRects() {
@@ -91,6 +103,38 @@ export class FakeElement {
   }
 }
 
+function select(nodes, sel) {
+  const tags = sel.split(',').map((s) => s.trim().toUpperCase());
+  return tags.includes('*') ? nodes : nodes.filter((n) => tags.includes(n.tagName));
+}
+
+/** A shadow root: its own tree; elements in it have no parentElement at the top (parentNode = the root). */
+export class FakeShadowRoot {
+  constructor(host) {
+    this.host = host;
+    this.nodeType = 11;
+    this.ownerDocument = host.ownerDocument;
+    this.children = [];
+  }
+  append(...kids) {
+    for (const k of kids) {
+      k.parentElement = null;
+      k.parentNode = this;
+      this.children.push(k);
+    }
+    return this;
+  }
+  *walk() {
+    for (const c of this.children) {
+      yield c;
+      yield* c.walk();
+    }
+  }
+  querySelectorAll(sel) {
+    return select([...this.walk()], sel);
+  }
+}
+
 class FakeWindow {
   constructor(doc) {
     this.document = doc;
@@ -101,7 +145,7 @@ class FakeWindow {
   }
   getComputedStyle(el) {
     let visibility = 'visible';
-    for (let n = el; n; n = n.parentElement) {
+    for (let n = el; n; n = n.composedParent()) {
       if (n.style.visibility) {
         visibility = n.style.visibility;
         break;
@@ -128,7 +172,6 @@ export class FakeDocument {
     return e;
   }
   querySelectorAll(sel) {
-    const tags = sel.split(',').map((s) => s.trim().toUpperCase());
-    return [...this.body.walk()].filter((n) => tags.includes(n.tagName));
+    return select([...this.body.walk()], sel);
   }
 }

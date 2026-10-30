@@ -1,0 +1,42 @@
+/* ludworks://extensions */
+.ext-top { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+.ext-top h1 { margin: 0 !important; flex: 1; }
+.ext-top .dev { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.ext-dev { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 16px; margin-bottom: 16px; }
+.ext-dev .grow { flex: 1; color: var(--muted); font-size: 12.5px; min-width: 200px; }
+.ext-note { margin-bottom: 16px; }
+.ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.ext-card { display: flex; flex-direction: column; gap: 10px; padding: 16px; min-height: 150px; }
+.ext-card.off { opacity: 0.72; }
+.ext-card .top { display: flex; gap: 12px; align-items: flex-start; }
+.ext-card .meta { flex: 1; min-width: 0; }
+.ext-card .name { font-weight: 650; overflow-wrap: anywhere; }
+.ext-card .ver { color: var(--faint); font-size: 12px; font-weight: 500; margin-left: 6px; }
+.ext-card .desc { color: var(--muted); font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin-top: 3px; }
+.ext-card .flags { display: flex; gap: 6px; flex-wrap: wrap; }
+.ext-card .actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.ext-card .actions .grow { flex: 1; }
+.ext-ic { width: 48px; height: 48px; flex: none; object-fit: contain; border-radius: 10px; }
+.ext-ic.ph { display: inline-flex; align-items: center; justify-content: center; background: var(--surface-2); color: var(--muted); font-weight: 700; font-size: 20px; }
+.pill.warn { background: var(--danger-soft); color: var(--danger); }
+.pill.muted { background: var(--surface-2); color: var(--muted); }
+.ext-empty { padding: 48px 24px; text-align: center; color: var(--muted); }
+.ext-empty .btn { margin-top: 14px; }
+/* details */
+.ext-back { margin-bottom: 14px; }
+.ext-head { display: flex; gap: 16px; align-items: center; margin-bottom: 18px; }
+.ext-head .ext-ic { width: 64px; height: 64px; }
+.ext-head h1 { margin: 0 !important; overflow-wrap: anywhere; }
+.ext-head .grow { flex: 1; min-width: 0; }
+.ext-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 6px; }
+.kv { display: grid; grid-template-columns: 170px 1fr; gap: 6px 16px; padding: 14px 18px; }
+.kv .k { color: var(--muted); }
+.kv .v { overflow-wrap: anywhere; min-width: 0; }
+.mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+.plist { margin: 0; padding: 14px 18px 14px 36px; display: flex; flex-direction: column; gap: 6px; }
+.plist.none { list-style: none; padding-left: 18px; color: var(--muted); }
+.err { padding: 10px 18px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.err:last-child { border-bottom: 0; }
+.err .when { color: var(--faint); font-size: 11.5px; }
+.err .src { color: var(--faint); font-size: 11.5px; overflow-wrap: anywhere; }
+.status { margin-top: 8px; font-size: 12.5px; }

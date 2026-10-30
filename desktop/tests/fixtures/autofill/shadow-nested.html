@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nested shadow DOM login</title>
+<link rel="stylesheet" href="fixture.css">
+<h1>Sign in</h1>
+<!-- Like reddit.com: an app element with an open shadow root holds the form; each text field is a
+     form-associated custom element whose <input> sits in its own (nested) open shadow root. -->
+<auth-flow id="app"></auth-flow>
+<div id="status"></div>
+<script>
+  customElements.define('text-field', class extends HTMLElement {
+    static formAssociated = true;
+    constructor() {
+      super();
+      this.internals = this.attachInternals();
+    }
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      const root = this.attachShadow({ mode: 'open', delegatesFocus: true });
+      root.innerHTML = `<link rel="stylesheet" href="fixture.css"><label part="label"></label><input>`;
+      const input = root.querySelector('input');
+      input.type = this.getAttribute('type') || 'text';
+      input.name = this.getAttribute('name') || '';
+      input.autocomplete = this.getAttribute('autocomplete') || '';
+      input.id = `${this.getAttribute('name')}-input`;
+      root.querySelector('label').textContent = this.getAttribute('label') || '';
+      input.addEventListener('input', () => {
+        this.internals.setFormValue(input.value);
+        this.dispatchEvent(new CustomEvent('field-change', { bubbles: true, composed: true }));
+      });
+    }
+    get value() {
+      return this.shadowRoot.querySelector('input').value;
+    }
+  });
+  customElements.define('auth-flow', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = `<link rel="stylesheet" href="fixture.css">
+        <form class="card" id="login" method="post" action="/login">
+          <text-field name="username" label="Email or username" autocomplete="username"></text-field>
+          <text-field name="password" type="password" label="Password" autocomplete="current-password"></text-field>
+          <button type="submit" id="submit" disabled>Log In</button>
+        </form>`;
+      const form = root.getElementById('login');
+      const [u, p] = root.querySelectorAll('text-field');
+      form.addEventListener('field-change', () => {
+        root.getElementById('submit').disabled = !(u.value && p.value);
+      });
+    }
+  });
+</script>
+<p><a href="/">Back</a></p>

@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SPA</title>
+<link rel="stylesheet" href="fixture.css">
+<nav><a href="#" id="home-link">Home</a> · <a href="#" id="signin-link">Sign in</a></nav>
+<main id="view"></main>
+<div id="status"></div>
+<script>
+  // Client-side routing (history.pushState) with a lazily rendered login view, and a fetch() login that
+  // routes back home without a page load — the browser never sees a navigation or a submit that leaves.
+  const view = document.getElementById('view');
+  function route(path, push = true) {
+    if (push) history.pushState({}, '', path);
+    view.textContent = '';
+    if (path.endsWith('/login')) {
+      view.innerHTML = '<p>Loading…</p>';
+      setTimeout(() => {
+        view.innerHTML = `<h1>Sign in</h1><form class="card" id="form">
+          <label for="u">Email</label><input id="u" type="email" name="email" autocomplete="username">
+          <label for="p">Password</label><input id="p" type="password" name="password" autocomplete="current-password">
+          <button id="go">Sign in</button></form>`;
+        document.getElementById('form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          await fetch('/api/login', { method: 'POST', body: JSON.stringify({ u: document.getElementById('u').value }) });
+          route('/spa/home');
+        });
+      }, 1200);
+    } else {
+      view.innerHTML = '<h1 id="home">Home</h1><p>Welcome.</p>';
+    }
+  }
+  document.getElementById('home-link').addEventListener('click', (e) => { e.preventDefault(); route('/spa/home'); });
+  document.getElementById('signin-link').addEventListener('click', (e) => { e.preventDefault(); route('/spa/login'); });
+  addEventListener('popstate', () => route(location.pathname, false));
+  route('/spa.html', false);
+</script>

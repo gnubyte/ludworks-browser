@@ -2,7 +2,8 @@
 //
 // 1. Every action in .github/workflows/*.yml is pinned to a full commit SHA with the tag in a
 //    trailing comment (`uses: owner/repo@<40 hex> # vX.Y.Z`). A tag can be moved by whoever
-//    controls the action's repository; a commit SHA cannot.
+//    controls the action's repository; a commit SHA cannot. Reusable workflows of this
+//    repository (`uses: ./.github/workflows/x.yml`) run from the caller's commit and are allowed.
 // 2. Every `pip install` installs only from hash-pinned requirements files under
 //    .github/requirements/ (--require-hashes, wheels only); nothing is resolved by name.
 // 3. Every requirements file pins exact versions (name==version) with SHA-256 hashes.
@@ -19,6 +20,8 @@ import { fileURLToPath } from 'node:url';
 const USES = /^\s*(?:-\s+)?uses:\s*(\S+)(.*)$/;
 const PINNED = /^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/;
 const VERSION_COMMENT = /^\s+# v\d+(?:\.\d+)*\s*$/;
+// A reusable workflow of this repository (`uses: ./.github/workflows/x.yml`); nothing outside the repo.
+const LOCAL_WORKFLOW = /^\.\/\.github\/workflows\/[\w.-]+\.ya?ml$/;
 const REQUIREMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*==[0-9][^\s;]*(\s*;.+)?$/;
 const HASH = /^--hash=sha256:[0-9a-f]{64}$/;
 
@@ -45,6 +48,7 @@ export function checkUses(name, text) {
   const errors = [];
   text.split(/\r?\n/).forEach((line, i) => {
     const m = USES.exec(line);
+    if (m && LOCAL_WORKFLOW.test(m[1])) return; // runs from the same commit as the caller
     if (m && !(PINNED.test(m[1]) && VERSION_COMMENT.test(m[2]))) {
       errors.push(`${name}:${i + 1}: action not pinned to a commit SHA with a version comment: ${line.trim()}`);
     }

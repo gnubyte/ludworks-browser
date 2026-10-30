@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Modal login</title>
+<link rel="stylesheet" href="fixture.css">
+<style>
+  dialog { border: 0; border-radius: 12px; padding: 0; width: 400px; opacity: 0; transform: scale(0.96); transition: opacity 0.35s, transform 0.35s; }
+  dialog[open].shown { opacity: 1; transform: none; }
+  dialog::backdrop { background: rgb(0 0 0 / 0.4); }
+</style>
+<h1>Streams</h1>
+<p>Like twitch.tv: the login form is created when you click "Log In" and fades in inside a modal.</p>
+<button type="button" id="open">Log In</button>
+<dialog id="dlg"></dialog>
+<script>
+  const dlg = document.getElementById('dlg');
+  document.getElementById('open').addEventListener('click', () => {
+    dlg.innerHTML = `<form class="card" method="post" action="/login" id="form">
+      <label for="login-username">Username</label><input id="login-username" autocomplete="username">
+      <label for="password-input">Password</label><input id="password-input" type="password" autocomplete="current-password">
+      <button type="submit" id="submit">Log In</button></form>`;
+    dlg.showModal();
+    requestAnimationFrame(() => requestAnimationFrame(() => dlg.classList.add('shown')));
+  });
+</script>

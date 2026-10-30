@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Multi-step login</title>
+<link rel="stylesheet" href="fixture.css">
+<h1>Sign in</h1>
+<!-- Identifier-first, like Google / Microsoft / Amazon: step 1 asks for the email only, then the page swaps in
+     a password step (the email stays as a hidden field), without a page load. -->
+<form class="card" id="form" method="post" action="/login">
+  <div id="step1">
+    <label for="identifier">Email or phone</label>
+    <input id="identifier" name="identifier" type="email" autocomplete="username webauthn">
+    <button type="button" id="next">Next</button>
+  </div>
+</form>
+<div id="status"></div>
+<script>
+  const form = document.getElementById('form');
+  function next() {
+    const id = document.getElementById('identifier');
+    if (!id.value) {
+      document.getElementById('status').textContent = 'Enter an email or phone number.';
+      return;
+    }
+    document.getElementById('status').textContent = '';
+    // Simulate the network round trip before the password step.
+    setTimeout(() => {
+      document.getElementById('step1').classList.add('hidden');
+      const step2 = document.createElement('div');
+      step2.id = 'step2';
+      step2.innerHTML = `<p id="who"></p><label for="Passwd">Enter your password</label>
+        <input id="Passwd" name="Passwd" type="password" autocomplete="current-password">
+        <button type="submit" id="signin">Sign in</button>`;
+      step2.querySelector('#who').textContent = id.value;
+      form.append(step2);
+      step2.querySelector('#Passwd').focus();
+    }, 400);
+  }
+  document.getElementById('next').addEventListener('click', next);
+  document.getElementById('identifier').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      next();
+    }
+  });
+</script>

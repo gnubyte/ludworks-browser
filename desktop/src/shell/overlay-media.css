@@ -1,0 +1,43 @@
+/* Image/video saver popup (overlay-media.js). */
+.md .head .grow { min-width: 0; }
+.md-ic { width: 32px; height: 32px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.md-bar { display: flex; align-items: center; gap: 6px; padding: 4px 12px 8px; flex-wrap: wrap; }
+.md-bar .btn.small, .md-foot .btn.small { height: 26px; padding: 0 10px; font-size: 12px; }
+.md-chips { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; min-width: 0; }
+.md-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 12px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; cursor: default; }
+.md-chip .n { font-weight: 500; font-variant-numeric: tabular-nums; opacity: 0.8; }
+.md-chip.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.md-chip:hover { border-color: var(--accent); }
+.md-small { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.md-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 8px; padding: 8px 12px; overflow: auto; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); align-content: start; }
+.md-grid:empty { display: none; }
+.md-tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 5px; border-radius: 10px; border: 2px solid transparent; background: var(--surface-2); cursor: default; min-width: 0; outline: none; }
+.md-tile:hover { border-color: var(--border); }
+.md-tile:focus-visible { border-color: var(--accent); }
+.md-tile.sel { border-color: var(--accent); background: var(--accent-soft); }
+.md-tile.off { opacity: 0.62; }
+.md-pic { aspect-ratio: 1; border-radius: 7px; overflow: hidden; display: flex; align-items: center; justify-content: center; color: var(--faint);
+  background-color: var(--surface); background-image: linear-gradient(45deg, var(--surface-2) 25%, transparent 25%, transparent 75%, var(--surface-2) 75%), linear-gradient(45deg, var(--surface-2) 25%, transparent 25%, transparent 75%, var(--surface-2) 75%); background-size: 14px 14px; background-position: 0 0, 7px 7px; }
+.md-pic img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.md-check { position: absolute; top: 9px; left: 9px; width: 16px; height: 16px; margin: 0; pointer-events: none; accent-color: var(--accent); }
+.md-tile:not(.sel):not(:hover) .md-check { opacity: 0.55; }
+.md-tile.off .md-check { display: none; }
+.md-meta { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); min-width: 0; }
+.md-type { flex: none; padding: 0 5px; border-radius: 4px; background: var(--surface); color: var(--text); font-weight: 650; font-size: 10.5px; line-height: 16px; }
+.md-type.video { background: var(--accent); color: var(--on-accent); }
+.md-dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.md-name { font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-reason { font-size: 11px; line-height: 1.25; color: var(--danger); }
+.md-empty { text-align: center; }
+.md-foot { display: flex; align-items: center; gap: 10px; padding: 10px 14px 12px; }
+.md-foot .grow { flex: 1; min-width: 0; }
+.md-status { font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; }
+.md-progress { height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.md-progress > i { display: block; height: 100%; background: var(--accent); transition: width 120ms; }
+.md-result { display: flex; align-items: center; gap: 6px; font-weight: 600; min-width: 0; }
+.md-result span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-result.ok { color: var(--ok); }
+.md-result.warn { color: var(--danger); }
+.md-failed { font-size: 11.5px; color: var(--muted); max-height: 84px; overflow: auto; }
+.md-busy::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent; vertical-align: -1px; animation: md-spin 0.8s linear infinite; }
+@keyframes md-spin { to { transform: rotate(360deg); } }

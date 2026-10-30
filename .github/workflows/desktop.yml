@@ -1,0 +1,154 @@
+# Ludworks Browser desktop (desktop/): tests, then Windows / Linux / macOS packages.
+#
+# Supply chain (same rules as ci.yml, enforced by .github/check-supply-chain.mjs): actions pinned to
+# commit SHAs, no npm packages, no PyPI. The only third-party binary is the browser engine (castlabs
+# Electron for Content Security), downloaded by desktop/build.mjs and verified against the SHA-256
+# sums pinned in desktop/electron.lock.json. Go tools (winres, setup, mkdeb) are stdlib-only.
+name: Desktop browser
+
+on:
+  push:
+    paths: ['desktop/**', 'src/lib/**', 'scripts/lib/**', '.github/workflows/desktop.yml']
+  pull_request:
+    paths: ['desktop/**', 'src/lib/**', 'scripts/lib/**', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+  # release.yml builds the release packages with exactly these jobs.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # github.workflow is the caller's name when called, so a release never cancels (or is cancelled by) CI.
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (unit, tools, logo, vectors)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/tools/go.mod
+          cache: false
+      - name: Stage the app and run the unit tests
+        run: |
+          node desktop/build.mjs stage
+          node --test desktop/tests/*.test.mjs
+      - name: Logo files match a fresh render
+        run: node desktop/scripts/make-logo.mjs --check
+      - name: Go tools (vet for Linux and Windows, tests)
+        working-directory: desktop/tools
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          GOOS=windows go vet ./...
+          go test ./...
+      - name: Engine pin is current (informational)
+        run: node desktop/scripts/bump-electron.mjs --check || true
+
+  windows:
+    name: Windows x64 installer
+    needs: test
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/tools/go.mod
+          cache: false
+      - name: Package and build the installer
+        run: node desktop/build.mjs all --target=win32-x64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludworks-browser-windows-x64
+          path: |
+            desktop/dist/LudworksBrowserSetup-*.exe
+            desktop/dist/LudworksBrowserSetup-*.exe.sha256
+          if-no-files-found: error
+
+  linux:
+    name: Linux ${{ matrix.arch }} (.deb, .tar.gz)
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/tools/go.mod
+          cache: false
+      - name: Package
+        run: node desktop/build.mjs all --target=linux-${{ matrix.arch }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludworks-browser-linux-${{ matrix.arch }}
+          path: |
+            desktop/dist/*.deb
+            desktop/dist/*.tar.gz
+            desktop/dist/*.sha256
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }} (.dmg)
+    needs: test
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        arch: [arm64, x64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/tools/go.mod
+          cache: false
+      - name: Package the app bundle
+        run: node desktop/build.mjs package --target=darwin-${{ matrix.arch }}
+      - name: Ad-hoc sign (no Apple Developer ID configured) and build the disk image
+        # With a Developer ID: codesign --deep --options runtime with entitlements, castlabs EVS
+        # `python3 -m castlabs_evs.vmp sign-pkg` BEFORE codesign, then notarytool + stapler.
+        run: |
+          cd "desktop/dist/darwin-${{ matrix.arch }}"
+          codesign --force --deep --sign - "Ludworks Browser.app"
+          ver="$(node -p "require('../../../package.json').version")"
+          hdiutil create -volname "Ludworks Browser" -srcfolder "Ludworks Browser.app" -ov -format ULFO "../Ludworks-Browser-${ver}-mac-${{ matrix.arch }}.dmg"
+          cd .. && shasum -a 256 Ludworks-Browser-*.dmg > "Ludworks-Browser-${ver}-mac-${{ matrix.arch }}.dmg.sha256"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludworks-browser-macos-${{ matrix.arch }}
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.dmg.sha256
+          if-no-files-found: error

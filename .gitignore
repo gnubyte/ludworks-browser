@@ -22,3 +22,11 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Ludworks Browser desktop build outputs
+/desktop/.cache/
+/desktop/build/
+/desktop/dist/
+/desktop/tools/bin/
+/desktop/tools/setup/payload/payload.zip
+/desktop/tools/setup/*.syso
