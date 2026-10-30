@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Shadow DOM login</title>
+<link rel="stylesheet" href="fixture.css">
+<h1>Sign in</h1>
+<!-- The whole login form lives in an open shadow root (web-component login widgets). -->
+<login-card id="card"></login-card>
+<div id="status"></div>
+<script>
+  customElements.define('login-card', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = `<link rel="stylesheet" href="fixture.css">
+        <form class="card" id="form" method="post" action="/login">
+          <label for="u">Username</label><input id="u" name="username" type="text" autocomplete="username">
+          <label for="p">Password</label><input id="p" name="password" type="password" autocomplete="current-password">
+          <button type="submit" id="submit">Sign in</button>
+        </form>`;
+    }
+  });
+</script>
+<p><a href="shadow-nested.html">Nested shadow roots</a> · <a href="/">Back</a></p>

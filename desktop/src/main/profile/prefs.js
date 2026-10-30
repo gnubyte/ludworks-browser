@@ -18,6 +18,9 @@ export const DEFAULT_PREFS = Object.freeze({
   blockThirdPartyCookies: false, // strip Cookie / Set-Cookie on third-party requests
   trackerButton: true, // toolbar: cross-site tracking cookies
   clearHistoryButton: true, // toolbar: clear recent history
+  mediaSaverButton: true, // toolbar: save the pictures and videos of a page
+  pipButton: true, // toolbar: picture-in-picture when the page has a video
+  autoPip: false, // a playing video goes picture-in-picture when you switch tabs
   offerToSavePasswords: true,
   passkeys: true, // act as WebAuthn authenticator with vault passkeys
   vaultLockMinutes: 15,
@@ -55,6 +58,9 @@ const VALIDATORS = {
   blockThirdPartyCookies: (v) => typeof v === 'boolean',
   trackerButton: (v) => typeof v === 'boolean',
   clearHistoryButton: (v) => typeof v === 'boolean',
+  mediaSaverButton: (v) => typeof v === 'boolean',
+  pipButton: (v) => typeof v === 'boolean',
+  autoPip: (v) => typeof v === 'boolean',
   offerToSavePasswords: (v) => typeof v === 'boolean',
   passkeys: (v) => typeof v === 'boolean',
   vaultLockMinutes: (v) => Number.isInteger(v) && v >= 0 && v <= 1440,

@@ -13,7 +13,7 @@ const OVERLAY_URL = 'lwshell://ui/overlay.html';
 const PANEL_URL = 'lwshell://ui/panel.html';
 const TITLEBAR_HEIGHT = 40;
 // Transparent margin around popup cards in the overlay view (src/shell/overlay.css #root padding).
-const OVERLAY_PAD = { x: 18, top: 4 };
+const OVERLAY_PAD = { x: 18, top: 4, bottom: 30 };
 // An AI agent's window: the page sits inside a coloured frame the shell draws (src/shell/shell.css .agent).
 const AGENT_FRAME = 3;
 
@@ -141,6 +141,7 @@ export class WindowCtl extends EventEmitter {
   newTab({ url = null, active = true, index = null, opener = null, webContents = null, pinned = false, typed = false } = {}) {
     const target = url || (webContents ? null : this.browser.newTabUrl());
     const tab = new Tab({ ctl: this, url: null, webContents, opener, pinned });
+    this.browser.onTabCreated(tab);
     tab.on('update', () => tab.ctl.onTabUpdate(tab)); // tab.ctl: tabs can move to other windows (adoptTab)
     let at = this.tabs.length;
     if (Number.isInteger(index)) at = Math.max(0, Math.min(index, this.tabs.length));
@@ -168,6 +169,7 @@ export class WindowCtl extends EventEmitter {
     if (!tab) return;
     const prev = this.activeTab();
     if (prev && prev !== tab) prev.view.setVisible(false);
+    if (prev && prev !== tab) this.browser.onTabSwitch(this, prev, tab);
     this.activeId = id;
     tab.lastActive = Date.now();
     this.hidePopup();
@@ -365,7 +367,15 @@ export class WindowCtl extends EventEmitter {
       this.browser.shortcuts.handle(event, input, this, this.activeTab());
     });
     this.overlay.webContents.on('blur', () => {
-      if (this.popup && this.popup.closeOnBlur) setTimeout(() => this.popup && this.popup.closeOnBlur && !this.overlay.webContents.isFocused() && this.hidePopup(), 50);
+      if (!this.popup || !this.popup.closeOnBlur) return;
+      // The overlay also loses focus while its window closes (e.g. "Exit" in the menu popup): by the time the
+      // timer runs, the window and its views may be gone.
+      setTimeout(() => {
+        if (this.destroyed || !this.popup || !this.popup.closeOnBlur) return;
+        const wc = this.overlay && this.overlay.webContents;
+        if (!wc || wc.isDestroyed() || wc.isFocused()) return;
+        this.hidePopup();
+      }, 50);
     });
     this.overlayReady = new Promise((resolve) => this.overlay.webContents.once('did-finish-load', resolve));
     this.overlay.webContents.loadURL(OVERLAY_URL);
@@ -387,7 +397,10 @@ export class WindowCtl extends EventEmitter {
     const seq = (this.popupSeq = (this.popupSeq || 0) + 1);
     this.popup = { kind, anchor, width: anchor.width + 2 * OVERLAY_PAD.x, height: anchor.height || 40, closeOnBlur, modal, seq };
     this.win.contentView.addChildView(ov); // topmost
-    ov.webContents.send('popup', { kind, data, seq, theme: this.themeName(), width: anchor.width, modal });
+    // The card's room below its anchor (window bottom, see positionOverlay): long lists scroll inside it.
+    const ch = this.win.getContentSize()[1];
+    const maxHeight = modal ? null : Math.max(120, ch - Math.max(0, anchor.y - OVERLAY_PAD.top) - 4 - OVERLAY_PAD.top - OVERLAY_PAD.bottom);
+    ov.webContents.send('popup', { kind, data, seq, theme: this.themeName(), width: anchor.width, modal, maxHeight });
     this.positionOverlay();
     ov.setVisible(true);
     if (focus) ov.webContents.focus();

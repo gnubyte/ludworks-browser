@@ -22,7 +22,7 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   session), session restore,
   address bar with history/bookmark/open-tab/search suggestions (Google, DuckDuckGo, Bing, Brave, Startpage, Ecosia,
   Kagi or custom), history (90 days, searchable), downloads (dangerous-type warnings),
-  find in page, zoom (remembered per site), print, save page, PDF viewer, picture-in-picture, dev tools, spell check,
+  find in page, zoom (remembered per site), print, save page, PDF viewer, dev tools, spell check,
   per-site permissions (camera, mic, location, notifications, screen sharing picker, external apps), certificate
   error interstitials, HTTP auth, light/dark themes, Windows 11 snap layouts / native title-bar buttons.
 * **Ludworks sign-in** (server URL + account password + two-step code). The browser keeps only a **vault-scoped device
@@ -33,7 +33,9 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   (`key_id`/`key_check`) and rollback checks per `VAULT-CRYPTO.md` §2.2/§2.5.
 * **Autofill**: a browser-drawn dropdown under login fields (pages cannot see, overlay or click-jack it), fills only
   after you pick, same URI rules as the extension (registrable domain via the Public Suffix List, host/exact/regex…),
-  TOTP codes, strong-password generation for sign-up forms, "save / update password" prompts.
+  TOTP codes (also split one-time-code boxes), strong-password generation for sign-up forms, "save / update password"
+  prompts. Works in open shadow DOM (web components), cross-site login iframes, pages and popups opened by
+  window.open / target=_blank (the content preload is registered on the session), zoomed pages, keyboard selection.
 * **Passkeys**: the browser is a WebAuthn authenticator backed by passkeys stored in your vault (`VAULT-CRYPTO.md` §10):
   create, sign in, conditional ("autofill") passkey sign-in; "Use another device or security key" falls back to
   Windows Hello / security keys. Passkeys sync to every device and to Bitwarden-compatible exports.
@@ -58,6 +60,20 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   Vivaldi, Opera, Arc, Chromium, Yandex, Firefox, LibreWolf, Waterfox and Zen (every profile), bookmark HTML files.
   **Export**: Bitwarden JSON (password-protected recommended, round-trips everything above), Bitwarden CSV, KeePass
   .kdbx; bookmarks HTML.
+* **Chrome extensions** (`src/main/extensions/`): install from the Chrome Web Store (its own "Add to Chrome" button, or
+  "Add to Ludworks Browser"), from a .crx/.zip file or unpacked (Developer mode); CRX3 signatures and the store ID are
+  verified, every install shows a permission prompt, Web Store extensions update daily. Toolbar puzzle menu, pinned
+  action buttons with popups and badges, context-menu items, keyboard commands, `ludworks://extensions`. Electron's
+  extension support is completed with action, tabs and windows events, contextMenus, notifications, cookies, alarms,
+  permissions, commands, storage.sync and webNavigation; APIs Electron lacks (declarativeNetRequest, blocking
+  webRequest, identity, native messaging, side panel, userScripts…) are left undefined and listed per extension.
+  Extensions cannot script or open ludworks:// pages and are not loaded in private windows.
+* **Picture in picture** (`src/main/pip.js`): toolbar button when the page has a video, Ctrl+Shift+P, right-click a
+  video (also inside iframes); optional automatic picture in picture when you switch away from a playing video.
+* **Image and video saver** (`src/main/media/`): toolbar badge counting the page's images and videos; a popup with
+  thumbnails, checkboxes and type filters (JPEG, PNG, GIF, WebP, AVIF, SVG, WebM, MP4…) saves the chosen files to a
+  folder through the tab's session, with safe names and Mark-of-the-Web. Streams (MediaSource, DRM, HLS/DASH) are
+  listed as not saveable.
 * **AI agents** (`src/main/agent/`, `tools/lwb/`): coding agents — Claude Code and any MCP client, Vision through its
   plugins, scripts — use the browser (below).
 * Main-process warnings and errors are kept in `<profile>/logs/main.log` (1 MB, rotated) — attach it to bug reports.

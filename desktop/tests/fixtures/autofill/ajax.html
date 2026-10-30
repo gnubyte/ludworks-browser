@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fetch() login</title>
+<link rel="stylesheet" href="fixture.css">
+<h1>Sign in</h1>
+<!-- No <form>, no autocomplete attributes, a <div role="button">: the login is sent with fetch() and the
+     page swaps its content without navigating (no submit event, no page load). -->
+<div class="card" id="app">
+  <label for="email">Email</label>
+  <input id="email" type="email" placeholder="you@example.com">
+  <label for="pwd">Password</label>
+  <input id="pwd" type="password">
+  <div class="btn" role="button" tabindex="0" id="go">Log in</div>
+</div>
+<div id="status"></div>
+<script>
+  const go = document.getElementById('go');
+  async function login() {
+    const email = document.getElementById('email').value;
+    const pwd = document.getElementById('pwd').value;
+    if (!email || !pwd) {
+      document.getElementById('status').textContent = 'Enter your email and password.';
+      return;
+    }
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, pwd }) });
+    if ((await r.json()).ok) {
+      document.getElementById('app').innerHTML = '<h2 id="welcome">Welcome back</h2>';
+      document.getElementById('status').textContent = '';
+    }
+  }
+  go.addEventListener('click', login);
+  go.addEventListener('keydown', (e) => e.key === 'Enter' && login());
+</script>

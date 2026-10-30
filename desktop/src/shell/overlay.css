@@ -18,6 +18,14 @@ body { padding: 0; }
 
 /* list items (menu, suggestions, downloads, folders) */
 .list { padding: 6px; }
+/* long lists (logins): the card fits the room below its anchor (--popup-max-h) and only its list scrolls */
+.popup.fit { display: flex; flex-direction: column; max-height: min(var(--popup-max-h, 560px), 560px); }
+.popup.fit.dropdown { max-height: min(var(--popup-max-h, 380px), 380px); }
+.popup.fit > * { flex: none; }
+.popup.fit > .list.scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.popup.fit > .list.scroll + .list { padding-top: 0; }
+.popup .search { padding: 0 12px 6px; }
+.popup .search .input { width: 100%; }
 .item { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 4px 10px; border-radius: 8px; cursor: default; color: var(--text); background: transparent; border: 0; width: 100%; text-align: left; }
 .item:hover, .item.sel { background: var(--hover); }
 .item.sel { background: var(--accent-soft); }

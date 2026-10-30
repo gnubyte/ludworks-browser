@@ -113,6 +113,7 @@ html, body { background: var(--frame); overflow: hidden; user-select: none; }
 /* --------------------------------------------------------- fullscreen mode */
 :root[data-htmlfs="true"] #chrome { display: none; }
 #key.capture { color: var(--accent); background: var(--accent-soft); }
+#feature-buttons .feature-img { width: 18px; height: 18px; object-fit: contain; }
 
 /* ------------------------------------------------------------- AI agent windows (shell.js renderAgent) */
 :root { --agent: #7c3aed; --agent-2: #a78bfa; }

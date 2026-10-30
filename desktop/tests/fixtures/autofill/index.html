@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autofill fixtures</title>
+<link rel="stylesheet" href="fixture.css">
+<h1>Autofill fixtures</h1>
+<p>Login patterns for testing Ludworks Browser autofill, save and update prompts. Run <code>server.mjs</code> and save a
+login for <code>http://127.0.0.1:18120</code> (and <code>http://localhost:18121</code> for the iframe).</p>
+<ul>
+  <li><a href="plain.html" id="plain">Plain form (POST)</a></li>
+  <li><a href="ajax.html" id="ajax">fetch() login, no form, no submit button</a></li>
+  <li><a href="multistep.html" id="multistep">Multi-step (username, then password)</a></li>
+  <li><a href="shadow.html" id="shadow">Shadow DOM (open shadow root)</a></li>
+  <li><a href="shadow-nested.html" id="shadow-nested">Shadow DOM (nested roots, form-associated fields)</a></li>
+  <li><a href="iframe.html" id="iframe">Cross-origin iframe login</a> (<a href="iframe.html?same=1">same-origin</a>)</li>
+  <li><a href="react.html" id="react">React-like controlled inputs</a></li>
+  <li><a href="totp.html" id="totp">One-time code (TOTP) step</a></li>
+  <li><a href="totp-split.html" id="totp-split">One-time code in split boxes</a></li>
+  <li><a href="change-password.html" id="change">Change password</a></li>
+  <li><a href="signup.html" id="signup">Sign-up (password generation)</a></li>
+  <li><a href="spa.html" id="spa">SPA: login form rendered late after a route change</a></li>
+  <li><a href="modal.html" id="modal">Login in a modal dialog</a></li>
+  <li><a href="plain.html" target="_blank" id="blank">Plain form in a new tab (target=_blank)</a></li>
+  <li><button type="button" id="popup" onclick="window.open('plain.html', 'login', 'width=520,height=640')">Plain form in a popup window (window.open)</button></li>
+</ul>

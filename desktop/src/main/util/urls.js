@@ -27,6 +27,7 @@ const INTERNAL_ALIASES = {
   passwords: 'passwords',
   newtab: 'newtab',
   version: 'about',
+  extensions: 'extensions',
   about: 'about',
 };
 

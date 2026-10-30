@@ -328,9 +328,22 @@ function renderFeatureButtons() {
   box.dataset.key = key;
   clear(box);
   for (const b of buttons) {
-    const btn = h('button', { class: `icon-btn feature ${b.pressed ? 'on' : ''} ${b.tone ? `tone-${b.tone}` : ''}`, title: b.title || '', 'aria-label': b.title || b.id, dataset: { id: b.id } }, icon(b.icon, { size: 18 }));
-    if (b.badge !== undefined && b.badge !== null && b.badge !== '' && b.badge !== 0) btn.append(h('span', { class: 'count' }, String(b.badge)));
-    if (b.popup) btn.addEventListener('click', () => call('popup.open', { kind: b.popup.kind, anchor: anchorOf(btn, { align: 'right', width: b.popup.width || 340 }) }));
+    const glyph = b.image ? h('img', { class: 'feature-img', src: b.image, width: 18, height: 18, alt: '', draggable: 'false' }) : icon(b.icon, { size: 18 });
+    const btn = h('button', { class: `icon-btn feature ${b.pressed ? 'on' : ''} ${b.tone ? `tone-${b.tone}` : ''}`, title: b.title || '', 'aria-label': b.title || b.id, dataset: { id: b.id } }, glyph);
+    if (b.badge !== undefined && b.badge !== null && b.badge !== '' && b.badge !== 0) {
+      const count = h('span', { class: 'count' }, String(b.badge));
+      if (b.badgeColor) count.style.background = b.badgeColor;
+      btn.append(count);
+    }
+    const anchor = () => anchorOf(btn, { align: 'right', width: (b.popup && b.popup.width) || 340 });
+    btn.addEventListener('click', () => {
+      if (b.popup) call('popup.open', { kind: b.popup.kind, anchor: anchor() });
+      else call('feature.button', { feature: b.feature, id: b.id, anchor: anchor() });
+    });
+    btn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      call('feature.button', { feature: b.feature, id: b.id, anchor: anchor(), menu: true });
+    });
     box.append(btn);
   }
 }

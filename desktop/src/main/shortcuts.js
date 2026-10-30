@@ -67,6 +67,7 @@ export function resolveShortcut(input) {
       case 'j': return R('devtools');
       case 'c': return R('inspect');
       case 'r': return R('hardReload');
+      case 'p': return P('pictureInPicture');
       case 'Delete': return R('clearData');
       case 'Tab': return R('prevTab');
       case 'g': return P('findPrev');

@@ -1,7 +1,8 @@
 // Passkeys: route the page's WebAuthn calls (navigator.credentials.create/get with `publicKey`) to the
 // browser's own authenticator (VAULT-CRYPTO.md §10), which asks the user in browser UI and signs with
 // passkeys from the Ludworks vault. "Use another device or security key" (or no Ludworks account)
-// hands the original call to the platform's WebAuthn.
+// hands the original call to the platform's WebAuthn — except a conditional (autofill) request, which
+// stays open instead.
 //
 // The main-world part is installed with contextBridge.executeInMainWorld, so the page never sees a
 // global bridge object; the bridge functions it holds can only ask — the browser derives the origin
@@ -135,7 +136,10 @@ export function installWebAuthnShim(bridge) {
     return withAbort(
       options.signal,
       bridge.get(JSON.stringify({ ...req, requestId: id }), conditional).then((r) => {
-        if (r && r.fallback) return origGet(options);
+        // Electron has no autofill UI for a conditional request: the platform would answer it with its modal
+        // passkey dialog as the page loads (Google's sign-in asks on every visit). Chrome keeps the request
+        // open while it has nothing to offer, until the page aborts it; so does this.
+        if (r && r.fallback) return conditional ? new Promise(() => {}) : origGet(options);
         if (!r || r.error) return fail(r || {});
         return buildGet(r);
       }),

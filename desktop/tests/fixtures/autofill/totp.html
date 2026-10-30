@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Two-step verification</title>
+<link rel="stylesheet" href="fixture.css">
+<h1>Two-step verification</h1>
+<form class="card" method="post" action="/verify" id="form">
+  <label for="code">Enter the 6-digit code from your authenticator app</label>
+  <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*">
+  <button type="submit" id="verify">Verify</button>
+</form>
+<p><a href="totp-split.html">Split code boxes</a> · <a href="/">Back</a></p>
