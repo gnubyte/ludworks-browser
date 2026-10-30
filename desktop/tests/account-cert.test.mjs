@@ -20,7 +20,7 @@ export const session = { fromPartition: () => ({ setCertificateVerifyProc() {}, 
 registerHooks({
   resolve: (spec, ctx, next) => (spec === 'electron' ? { url: `data:text/javascript,${encodeURIComponent(ELECTRON)}`, shortCircuit: true } : next(spec, ctx)),
 });
-const { Account } = await import('../build/app/main/account/account.js');
+const { Account, selfSignedFp } = await import('../build/app/main/account/account.js');
 
 const PEM = readFileSync(new URL('./fixtures/certs/server-leaf.crt', import.meta.url), 'utf8');
 const NEXT = new X509Certificate(PEM).fingerprint256.replace(/:/g, '').toLowerCase();
@@ -86,4 +86,30 @@ test('an unannounced new certificate is reported, and confirming it while signed
   assert.equal(b.pinnedHosts.get(HOST), NEXT);
   assert.equal(account.changedCertificate(), null);
   assert.equal(account.summary().osTrust.trusted, false);
+});
+
+test('signed in while Windows trusted the old certificate (no pin): a new one is still offered to confirm', async (t) => {
+  const { account, b, seen } = signedIn(t, () => ({}));
+  account.syncNow = async () => {};
+  account.acc.pin = null;
+  account.transport.pins.clear();
+  seen.fingerprint = NEXT; // Windows does not know the new certificate: untrusted, unpinned
+  const c = account.changedCertificate();
+  assert.equal(c.fingerprintHex, NEXT);
+  assert.equal(c.pinned, null);
+
+  account.trust(c.serverUrl, c.fingerprintHex);
+  assert.equal(account.acc.pin, NEXT);
+  assert.equal(b.pinnedHosts.get(HOST), NEXT);
+  assert.equal(account.summary().osTrust.supported, process.platform === 'win32');
+
+  seen.trusted = true; // a certificate Windows (or a public CA) trusts is never offered
+  account.acc.pin = null;
+  assert.equal(account.changedCertificate(), null);
+});
+
+test('signing in to a self-signed server Windows trusts still pins it', () => {
+  assert.equal(selfSignedFp({ fingerprint: NEXT, pem: PEM }), NEXT);
+  assert.equal(selfSignedFp({ fingerprint: NEXT, pem: 'not a certificate' }), null);
+  assert.equal(selfSignedFp(null), null);
 });
