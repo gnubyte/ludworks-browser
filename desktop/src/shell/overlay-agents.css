@@ -1,0 +1,22 @@
+/* AI agents popups (overlay-agents.js). */
+.ag-ic { width: 30px; height: 30px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--agent-soft, rgba(124, 58, 237, 0.14)); color: var(--agent, #7c3aed); flex: none; }
+.ag-ic.big { width: 40px; height: 40px; border-radius: 10px; }
+.ag-list { max-height: 360px; overflow: auto; }
+.ag-row { min-height: 48px; padding-right: 6px; }
+.ag-row:hover { background: transparent; }
+.ag-row .t { font-weight: 600; }
+.ag-label { font-weight: 400; color: var(--muted); }
+.ag-row .s { white-space: normal; }
+.ag-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); display: inline-block; }
+.ag-row.busy .ag-dot { background: var(--agent, #7c3aed); box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.25); animation: ag-pulse 1.2s ease-in-out infinite; }
+.ag-row.stopped .ag-dot { background: #d9480f; }
+.ag-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.ag-foot { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 10px; gap: 6px; }
+.ag-approve .head { padding-top: 16px; align-items: flex-start; }
+.ag-approve .head h2 { overflow-wrap: anywhere; line-height: 1.3; }
+.ag-approve .stack > div { line-height: 1.45; }
+.ag-accounts { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; max-height: 220px; overflow: auto; }
+.ag-accounts .check { align-items: center; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); }
+.ag-accounts .t { font-weight: 600; }
+.ag-accounts .s { color: var(--muted); font-size: 12px; }
+@keyframes ag-pulse { 50% { box-shadow: 0 0 0 6px rgba(124, 58, 237, 0.08); } }

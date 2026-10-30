@@ -58,7 +58,45 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   Vivaldi, Opera, Arc, Chromium, Yandex, Firefox, LibreWolf, Waterfox and Zen (every profile), bookmark HTML files.
   **Export**: Bitwarden JSON (password-protected recommended, round-trips everything above), Bitwarden CSV, KeePass
   .kdbx; bookmarks HTML.
+* **AI agents** (`src/main/agent/`, `tools/lwb/`): coding agents — Claude Code and any MCP client, Vision through its
+  plugins, scripts — use the browser (below).
 * Main-process warnings and errors are kept in `<profile>/logs/main.log` (1 MB, rotated) — attach it to bug reports.
+
+## AI agents (Claude Code, Vision, any MCP client)
+
+Off until you turn it on in **Settings → AI agents**, or allow the first agent that asks. Then an agent works in **a
+window of its own** — framed in violet, labelled "Claude Code is working in this window…", with **Stop** and
+**Disconnect** — opened without taking the keyboard from you, and kept out of session restore, history and tab sync.
+
+* **Tools** (MCP names; the same with `lwb`): `browser_navigate`, `browser_snapshot` (the page's accessibility tree as
+  a compact outline; actionable elements carry stable refs such as `[ref=e12]`, iframes and cross-site frames
+  included), `browser_find`, `browser_read` (readable text), `browser_click` / `browser_type` / `browser_fill_form` /
+  `browser_select_option` / `browser_press_key` / `browser_hover` / `browser_scroll` / `browser_drag` /
+  `browser_file_upload` (real mouse and keyboard input through the DevTools protocol; a click on something covered
+  says what covers it), `browser_screenshot` (CSS-pixel coordinates for x/y clicks; `annotate` labels every
+  interactive element with its ref), `browser_wait_for`, `browser_evaluate`, `browser_console_messages`,
+  `browser_network_requests`, `browser_handle_dialog`, `browser_fill_login`, `browser_tabs`, `browser_downloads`,
+  `browser_resize` and `browser_batch` (several steps in one call). Each action reports what it caused: a navigation,
+  a new tab (which becomes the agent's), a dialog, a download.
+* **lwb** (next to the browser executable; Go stdlib only): `lwb mcp` is a stdio MCP server — it answers `initialize`
+  and `tools/list` itself and starts the browser only when a tool is called; `lwb navigate https://…`,
+  `lwb snapshot --filter=interactive`, `lwb click e12`… run one tool (screenshots are saved as files). It finds the
+  browser through `<profile>/agent-endpoint.json` (port + access key, readable by you only) and, when agent access is
+  off or the browser is closed, starts it with `--agent-request=<client>` so you can allow that agent.
+* **Connecting**: *Connect Claude Code* runs `claude mcp add --scope user ludworks-browser -- "<lwb>" mcp` — or, with
+  no `claude` command, adds the server to the Claude desktop app's `claude_desktop_config.json` (read by its Code tab
+  and its chat; `%LOCALAPPDATA%\Claude-Data\claude_<id>` or `%APPDATA%\Claude` on Windows) — writes a skill to
+  `~/.claude/skills/ludworks-browser` and (optional) allows the tools in `~/.claude/settings.json`. *Add to
+  Vision* writes `%APPDATA%\Vision\plugins\ludworks-browser.json` (`~/Library/Application Support/Vision/plugins` on
+  macOS) — a plugin whose tools run `lwb` in Vision's agent shell; PowerShell gets the arguments as JSON on stdin,
+  since Windows PowerShell 5.1 garbles native arguments containing quotes — and the same skill. Other MCP clients:
+  the JSON shown in Settings (or an HTTP endpoint at `http://127.0.0.1:47821/mcp` with the access key).
+* **What agents may do**: each client is approved once ("Always allow" or "this time"). They use the tabs they open,
+  tabs you share with them (`browser_tabs action=share` asks for the one you are looking at) or, if you choose, all
+  your tabs — never private windows or `ludworks://` pages. `browser_fill_login` fills a saved login after you pick the
+  account in the browser; the agent never sees the password, and password values are masked in snapshots. Running
+  JavaScript (`browser_evaluate`) can be switched off. The server listens on 127.0.0.1 only and refuses requests
+  without the key, with an `Origin` header (web pages) or with another `Host` (DNS rebinding).
 
 ## Layout
 
@@ -70,13 +108,15 @@ desktop/
                           account/ (sign-in, vault, browser sync, TLS pinning), autofill.js, passkeys.js, cbor.js,
                           import/ (Bitwarden/KeePass/CSV, other browsers), blocker/ (content blocker),
                           privacy/ (tracking cookies, clear history), webrequest.js (one webRequest dispatcher per
-                          session), install-win.js, profile/ (SQLite stores)
+                          session), install-win.js, profile/ (SQLite stores), agent/ (AI agents: tool registry,
+                          MCP, local server, DevTools-protocol driver, accessibility snapshots, harness setup)
   src/preload/            shell.cjs (browser UI), content-base.cjs + features/ (blocker, autofill, WebAuthn shim)
   src/shell/              tab strip/toolbar, popup overlay, error panel (lwshell://)
   src/pages/              ludworks:// pages: newtab, welcome, settings, passwords, bookmarks, history, downloads, sync, about
   src/vendor/vault/       verbatim copy of the web app's vault import/export library (check-vendor.mjs)
   ../src/lib/             vault crypto, URL matching, PSL, TOTP, generator, field detection (shared with the extension)
-  tools/                  Go (stdlib only): winres (exe icon/version), setup (Windows installer), mkdeb (.deb)
+  tools/                  Go (stdlib only): winres (exe icon/version), setup (Windows installer), mkdeb (.deb),
+                          lwb (AI agents' CLI and MCP bridge; tools.json is generated from src/main/agent/tools.js)
   packaging/linux/        control, maintainer scripts, AppArmor profile (user-namespace sandbox on Ubuntu 24.04+)
   scripts/                make-logo.mjs, make-browser-vectors.mjs, bump-electron.mjs, check-vendor.mjs
   tests/                  node --test unit tests (+ fixtures: shared vectors, a WebAuthn test relying party)

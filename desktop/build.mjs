@@ -5,6 +5,7 @@
 //   node desktop/build.mjs fetch   [--target=win32-x64]  download + SHA-256-verify the pinned engine
 //   node desktop/build.mjs package [--target=win32-x64]  stage + engine → desktop/dist/<target>/
 //   node desktop/build.mjs all     [--target=…]          package and write the release archive
+//   node desktop/build.mjs lwb     [--target=…]          the AI agents' CLI → desktop/tools/bin (packages include it)
 //
 // Targets: win32-x64 win32-arm64 darwin-x64 darwin-arm64 linux-x64 linux-arm64 (default: this machine,
 // or win32-x64 when run inside WSL for the Windows host).
@@ -18,7 +19,7 @@
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { extractZip } from './scripts/lib/unzip.mjs';
@@ -106,6 +107,7 @@ export async function packageTarget(target) {
   const [platform, arch] = target.split('-');
   const zip = await fetchEngine(target);
   const appDir = await stage();
+  await writeLwbCatalog();
   const distRoot = path.join(DESKTOP, 'dist', target);
   const outDir = path.join(distRoot, platform === 'darwin' ? '' : PRODUCT);
   console.log(`==> extracting engine for ${target}`);
@@ -136,6 +138,7 @@ export async function packageTarget(target) {
   const fuses = flipFuses(exe, LUDWORKS_FUSES);
   console.log('==> fuses', fuses);
   cpSync(appDir, path.join(outDir, 'resources', 'app'), { recursive: true });
+  buildLwb(target, path.join(outDir, platform === 'win32' ? 'lwb.exe' : 'lwb'));
   if (platform === 'win32') windowsResources(exe);
   if (platform === 'linux') linuxExtras(outDir);
   writeFileSync(path.join(outDir, 'VERSION'), `${PKG.version}\n`);
@@ -236,6 +239,7 @@ function packageMac(distRoot, appDir, arch) {
     if (f.endsWith('.lproj') && !['en.lproj', 'Base.lproj'].includes(f)) rmSync(path.join(contents, 'Frameworks', 'Electron Framework.framework', 'Versions', 'A', 'Resources', f), { recursive: true, force: true });
   }
   cpSync(appDir, path.join(contents, 'Resources', 'app'), { recursive: true });
+  buildLwb(`darwin-${arch}`, path.join(contents, 'MacOS', 'lwb'));
   console.log(`==> ${app} (sign with codesign, then VMP-sign with castlabs EVS before notarising)`);
   return app;
 }
@@ -244,6 +248,31 @@ function packageMac(distRoot, appDir, arch) {
 function go(args, env = {}) {
   const r = spawnSync('go', args, { cwd: path.join(DESKTOP, 'tools'), stdio: 'inherit', env: { ...process.env, CGO_ENABLED: '0', GOFLAGS: '-mod=mod', ...env } });
   if (r.status !== 0) throw new Error(`go ${args.join(' ')} failed`);
+}
+
+/**
+ * lwb, the AI agents' command line and MCP bridge (tools/lwb, Go stdlib only), for a target. Its tool
+ * catalog (tools/lwb/tools.json, embedded) is regenerated from the browser's registry first, so the CLI
+ * and the browser always agree. Without Go the package ships without lwb (with a warning).
+ */
+export async function writeLwbCatalog() {
+  const { catalog } = await import(pathToFileURL(path.join(DESKTOP, 'src', 'main', 'agent', 'tools.js')).href);
+  const file = path.join(DESKTOP, 'tools', 'lwb', 'tools.json');
+  const text = `${JSON.stringify(catalog(PKG.version), null, 1)}\n`;
+  if (readSafe(file) !== text) writeFileSync(file, text);
+  return file;
+}
+
+function buildLwb(target, out) {
+  const [platform, arch] = target.split('-');
+  if (spawnSync('go', ['version'], { stdio: 'ignore' }).status !== 0) {
+    console.warn('!! Go not found — packaged without lwb (the AI agents command line)');
+    return null;
+  }
+  mkdirSync(path.dirname(out), { recursive: true });
+  go(['build', '-trimpath', '-buildvcs=false', '-ldflags', `-s -w -X main.version=${PKG.version}`, '-o', out, './lwb'], { GOOS: platform === 'win32' ? 'windows' : platform, GOARCH: arch === 'arm64' ? 'arm64' : 'amd64' });
+  console.log(`==> ${out}`);
+  return out;
 }
 
 /** winres.exe (Windows resource editor used while packaging). Needs Go. */
@@ -289,7 +318,7 @@ export function windowsInstaller(target) {
 }
 
 // -------------------------------------------------------------------------------------- linux
-const LINUX_EXEC = new Set(['ludworks-browser', 'chrome-sandbox', 'chrome_crashpad_handler']);
+const LINUX_EXEC = new Set(['ludworks-browser', 'chrome-sandbox', 'chrome_crashpad_handler', 'lwb']);
 
 function listFiles(root) {
   const out = [];
@@ -351,6 +380,11 @@ async function main() {
   if (cmd === 'stage') console.log(await stage(arg('out', '') ? path.resolve(arg('out', '')) : undefined));
   else if (cmd === 'fetch') console.log(await fetchEngine(target));
   else if (cmd === 'tools') buildTools();
+  else if (cmd === 'lwb') {
+    // for development: desktop/tools/bin/lwb(.exe), found by an unpackaged browser
+    await writeLwbCatalog();
+    buildLwb(target, path.join(DESKTOP, 'tools', 'bin', target.startsWith('win32') ? 'lwb.exe' : 'lwb'));
+  }
   else if (cmd === 'package') await packageTarget(target);
   else if (cmd === 'installer') windowsInstaller(target);
   else if (cmd === 'all') {
