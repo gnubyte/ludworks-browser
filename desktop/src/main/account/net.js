@@ -33,8 +33,17 @@ export class ServerTransport {
     this.pins = new Map(); // host → hex fingerprint
     this.nextPins = new Map(); // host → hex fingerprint the server announced as its renewal (over the pinned connection)
     this.seen = new Map(); // host → {fingerprint, pem, trusted (CA), at}
-    this.ses = session.fromPartition(PARTITION);
-    this.ses.setCertificateVerifyProc((req, cb) => {
+    this.generation = 0;
+    this.ses = this.newSession();
+  }
+
+  // Chromium caches a session's certificate verdicts: once a handshake was refused (an unconfirmed
+  // certificate), the same session keeps refusing it even after the user confirmed it. So every pin
+  // change starts a fresh in-memory session (no cookies or cache to lose).
+  newSession() {
+    const ses = session.fromPartition(this.generation ? `${PARTITION}-${this.generation}` : PARTITION);
+    this.generation++;
+    ses.setCertificateVerifyProc((req, cb) => {
       const fp = fingerprintHex(req.certificate.fingerprint);
       const caTrusted = req.verificationResult === 'net::OK';
       this.seen.set(req.hostname, { fingerprint: fp, pem: req.certificate.data, trusted: caTrusted, at: Date.now(), error: caTrusted ? null : req.verificationResult });
@@ -43,17 +52,22 @@ export class ServerTransport {
       const next = this.nextPins.get(req.hostname);
       cb((pin && pin === fp) || (next && next === fp) ? 0 : -2); // self-signed: exactly the certificate the user confirmed (or its announced renewal)
     });
-    this.ses.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
+    ses.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
+    return ses;
   }
 
   setPin(host, hex) {
+    if ((this.pins.get(host) || '') === (hex || '')) return;
     if (hex) this.pins.set(host, hex);
     else this.pins.delete(host);
+    this.ses = this.newSession();
   }
 
   setNextPin(host, hex) {
+    if ((this.nextPins.get(host) || '') === (hex || '')) return;
     if (hex) this.nextPins.set(host, hex);
     else this.nextPins.delete(host);
+    this.ses = this.newSession();
   }
 
   lastSeen(host) {
