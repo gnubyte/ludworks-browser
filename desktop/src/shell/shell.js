@@ -86,6 +86,7 @@ function renderTab(el, t, active, narrow) {
   el.classList.toggle('pinned', !!t.pinned);
   el.classList.toggle('narrow', narrow);
   el.classList.toggle('crashed', !!(t.error && t.error.kind === 'crash'));
+  el.classList.toggle('agent', !!t.agent); // an AI agent is using this tab (shared with it)
   el.setAttribute('aria-selected', active ? 'true' : 'false');
   el.title = t.title + (t.url && !t.url.startsWith('ludworks://newtab') ? `\n${t.display || t.url}` : '');
   const key = JSON.stringify([t.title, t.favicon, t.loading, t.audible, t.muted, t.pinned, !!t.error]);
@@ -605,11 +606,42 @@ function renderFind() {
   $('find-input').classList.toggle('nomatch', !!(f.text && f.matches === 0));
 }
 
+// An AI agent's own window (src/main/agent/agent.js): a coloured frame around the page (pulsing while the
+// agent works) and a bar saying who is in control, with Stop.
+function renderAgent() {
+  const a = state.agent;
+  root.dataset.agent = String(!!a);
+  root.dataset.agentBusy = String(!!(a && a.busy && !a.stopped));
+  let bar = $('agent-bar');
+  if (!a) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = h('div', { id: 'agent-bar', role: 'status' });
+    $('chrome').append(bar);
+  }
+  const key = JSON.stringify(a);
+  if (bar.dataset.key === key) return;
+  bar.dataset.key = key;
+  clear(bar);
+  const act = (action) => call('popup.action', { kind: 'agents', action, data: { key: a.key } });
+  bar.append(
+    icon('bot', { size: 15 }),
+    h('span', { class: 'who' }, `${a.client}${a.label ? ` · ${a.label}` : ''}`),
+    h('span', { class: 'what' }, a.stopped ? 'stopped by you' : a.busy ? 'is working in this window…' : 'is using this window'),
+    h('span', { class: 'grow' }),
+    a.stopped ? h('button', { class: 'agent-btn', onclick: () => act('resume') }, 'Resume') : h('button', { class: 'agent-btn', title: 'Stop this agent (it cannot continue until you resume it)', onclick: () => act('stop') }, 'Stop'),
+    h('button', { class: 'agent-btn', title: 'Disconnect the agent (the tabs stay)', onclick: () => act('disconnect') }, 'Disconnect'),
+  );
+}
+
 function render(s) {
   state = s;
   root.dataset.theme = s.theme;
   root.dataset.fullscreen = String(!!s.fullscreen);
   root.dataset.htmlfs = String(!!s.htmlFullscreen);
+  renderAgent();
   renderTabs();
   renderToolbar();
   renderFeatureButtons();

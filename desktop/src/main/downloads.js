@@ -54,7 +54,8 @@ export class Downloads extends EventEmitter {
     const id = randomUUID();
     const dir = this.prefs.get('downloadsDir') || downloadsDir();
     const name = sanitizeName(item.getFilename());
-    if (this.prefs.get('askWhereToSave')) {
+    // silentFor (set by the AI agents feature): an agent's tab cannot answer a save dialog
+    if (this.prefs.get('askWhereToSave') && !(this.silentFor && this.silentFor(wc))) {
       const res = dialog.showSaveDialogSync({ defaultPath: path.join(dir, name) });
       if (!res) {
         item.cancel();

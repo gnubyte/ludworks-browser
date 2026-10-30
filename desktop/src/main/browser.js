@@ -80,6 +80,9 @@ export class Browser {
     const { Blocker } = await import('./blocker/blocker.js');
     this.blocker = new Blocker(this);
     this.registerFeature(this.blocker);
+    const { AgentHub } = await import('./agent/agent.js');
+    this.agent = new AgentHub(this);
+    this.registerFeature(this.agent);
     this.registerIpc();
 
     this.bookmarks.on('change', () => this.onBookmarksChange());
@@ -96,6 +99,7 @@ export class Browser {
     if (!restored) this.newWindow({ urls: urls.length ? urls : [firstRun ? 'ludworks://welcome/' : this.newTabUrl()] });
     else if (urls.length) this.openUrls(urls);
     this.account.start().catch((e) => log.warn('account start failed', { message: e.message }));
+    this.agentRequest(argv);
     setInterval(() => this.history.prune(), 6 * 3600 * 1000).unref();
     setTimeout(() => this.history.prune(), 60 * 1000).unref();
   }
@@ -158,12 +162,13 @@ export class Browser {
   }
 
   // ---------------------------------------------------------------------------------- windows
-  newWindow({ urls = null, private: isPrivate = false, bounds = null, maximized = false, tabs = null, active = 0, empty = false, inactive = false } = {}) {
+  newWindow({ urls = null, private: isPrivate = false, bounds = null, maximized = false, tabs = null, active = 0, empty = false, agent = null, inactive = false } = {}) {
+    // agent: an AI agent's own window (agent/agent.js): opens without taking focus, stays out of session restore
     // inactive: opens without taking focus (a tab being dragged out: tab-drag.js)
-    const saved = !bounds && !isPrivate ? this.db.getMeta('window_state', null) : null;
-    const ctl = new WindowCtl({ browser: this, private: isPrivate, bounds: bounds || (saved && saved.bounds) || null, maximized: maximized || !!(saved && saved.maximized), inactive });
+    const saved = !bounds && !isPrivate && !agent ? this.db.getMeta('window_state', null) : null;
+    const ctl = new WindowCtl({ browser: this, private: isPrivate, bounds: bounds || (saved && saved.bounds) || null, maximized: maximized || !!(saved && saved.maximized), agent, inactive });
     this.windows.add(ctl);
-    if (!inactive) this.lastFocused = ctl;
+    if (!agent && !inactive) this.lastFocused = ctl;
     if (empty) {
       // the caller adds the first tab (window.open popups adopt the opener-created webContents)
     } else if (tabs && tabs.length) {
@@ -209,7 +214,7 @@ export class Browser {
   }
 
   rememberWindowState(ctl) {
-    if (ctl.private || ctl.win.isFullScreen() || ctl.win.isMinimized()) return;
+    if (ctl.private || ctl.agent || ctl.win.isFullScreen() || ctl.win.isMinimized()) return;
     clearTimeout(this.winStateTimer);
     this.winStateTimer = setTimeout(() => {
       if (ctl.destroyed) return;
@@ -218,12 +223,13 @@ export class Browser {
   }
 
   ensureWindow() {
-    if (![...this.windows].some((w) => !w.private)) this.newWindow({});
+    if (![...this.windows].some((w) => !w.private && !w.agent && !w.destroyed)) this.newWindow({});
     else this.focusedWindow().win.focus();
   }
 
-  focusedWindow({ allowPrivate = true } = {}) {
-    const list = [...this.windows].filter((w) => !w.destroyed && (allowPrivate || !w.private));
+  /** The window the user works in: AI agents' own windows only with allowAgent. */
+  focusedWindow({ allowPrivate = true, allowAgent = false } = {}) {
+    const list = [...this.windows].filter((w) => !w.destroyed && (allowPrivate || !w.private) && (allowAgent || !w.agent));
     if (this.lastFocused && list.includes(this.lastFocused)) return this.lastFocused;
     return list[list.length - 1] || null;
   }
@@ -246,11 +252,20 @@ export class Browser {
   }
 
   handleCommandLine(argv) {
+    if (this.agentRequest(argv) && !this.urlsFromArgv(argv).length) return;
     const isPrivate = argv.includes('--incognito') || argv.includes('--private') || argv.includes('--inprivate');
     const urls = this.urlsFromArgv(argv);
     if (isPrivate || argv.includes('--new-window')) this.newWindow({ urls, private: isPrivate });
     else if (urls.length) this.openUrls(urls);
     else this.ensureWindow();
+  }
+
+  /** `--agent-request=<client>` (from the lwb CLI): ask the user to let that agent in. True when present. */
+  agentRequest(argv) {
+    const a = argv.find((x) => typeof x === 'string' && x.startsWith('--agent-request='));
+    if (!a || !this.agent) return false;
+    this.agent.request(a.slice('--agent-request='.length).slice(0, 100)).catch((e) => log.warn('agent request failed', { message: e.message }));
+    return true;
   }
 
   urlsFromArgv(argv) {
@@ -280,8 +295,8 @@ export class Browser {
 
   /** A window is about to close (not cancelled): closing the last normal window saves the session first. */
   onWindowClosing(ctl) {
-    if (ctl.private || this.quitting) return;
-    if ([...this.windows].some((w) => w !== ctl && !w.private && !w.destroyed)) return;
+    if (ctl.private || ctl.agent || this.quitting) return;
+    if ([...this.windows].some((w) => w !== ctl && !w.private && !w.agent && !w.destroyed)) return;
     this.saveSession();
     this.lastWindowSaved = true; // keep this snapshot: quitting next must not overwrite it with an empty session
   }
@@ -309,6 +324,7 @@ export class Browser {
   }
 
   confirmLeave(tab) {
+    if (tab.agentOwned) return true; // an agent navigating away: no blocking "Leave site?" box it cannot answer
     const r = dialog.showMessageBoxSync(tab.ctl.win, {
       type: 'question',
       buttons: ['Leave', 'Stay'],
@@ -333,7 +349,7 @@ export class Browser {
   saveSession() {
     if (!this.db) return;
     const windows = [...this.windows]
-      .filter((w) => !w.private && !w.destroyed && w.tabs.length)
+      .filter((w) => !w.private && !w.agent && !w.destroyed && w.tabs.length)
       .map((w) => ({
         bounds: w.win.isDestroyed() ? null : w.win.getNormalBounds(),
         maximized: w.win.isDestroyed() ? false : w.win.isMaximized(),
@@ -366,6 +382,7 @@ export class Browser {
   beforeQuit() {
     this.quitting = true;
     this.saveSession();
+    if (this.agent) this.agent.beforeQuit();
     try {
       this.account.stop();
     } catch {
@@ -609,7 +626,7 @@ export class Browser {
   syncableTabs() {
     const out = [];
     for (const w of this.windows) {
-      if (w.private) continue;
+      if (w.private || w.agent) continue;
       for (const t of w.tabs) {
         const url = t.wc.isDestroyed() ? t.url : t.wc.getURL();
         if (/^https?:/i.test(url)) out.push({ url: url.slice(0, 4096), title: String(t.title || '').slice(0, 300), last_used: t.lastActive || Date.now() });

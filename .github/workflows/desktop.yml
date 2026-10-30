@@ -130,6 +130,10 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/tools/go.mod
+          cache: false
       - name: Package the app bundle
         run: node desktop/build.mjs package --target=darwin-${{ matrix.arch }}
       - name: Ad-hoc sign (no Apple Developer ID configured) and build the disk image

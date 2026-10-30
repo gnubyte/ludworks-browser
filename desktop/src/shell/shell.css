@@ -113,3 +113,21 @@ html, body { background: var(--frame); overflow: hidden; user-select: none; }
 /* --------------------------------------------------------- fullscreen mode */
 :root[data-htmlfs="true"] #chrome { display: none; }
 #key.capture { color: var(--accent); background: var(--accent-soft); }
+
+/* ------------------------------------------------------------- AI agent windows (shell.js renderAgent) */
+:root { --agent: #7c3aed; --agent-2: #a78bfa; }
+:root[data-agent="true"], :root[data-agent="true"] body { background: var(--agent); }
+:root[data-agent="true"] #chrome { background: var(--frame); }
+:root[data-agent-busy="true"], :root[data-agent-busy="true"] body { animation: agent-glow 1.6s ease-in-out infinite; }
+@keyframes agent-glow { 50% { background: var(--agent-2); } }
+#agent-bar {
+  display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 12px; background: var(--agent); color: #fff;
+  font-size: 12.5px; -webkit-app-region: no-drag;
+}
+#agent-bar .who { font-weight: 650; }
+#agent-bar .what { opacity: 0.9; }
+#agent-bar .grow { flex: 1; }
+#agent-bar .agent-btn { height: 22px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.55); background: transparent; color: #fff; font: inherit; cursor: pointer; }
+#agent-bar .agent-btn:hover { background: rgba(255, 255, 255, 0.18); }
+:root[data-agent-busy="true"] #agent-bar { animation: agent-glow 1.6s ease-in-out infinite; }
+.tab.agent::after { display: block; content: ""; position: absolute; left: 8px; right: 8px; top: auto; bottom: 0; height: 2px; width: auto; border-radius: 2px; background: var(--agent); }

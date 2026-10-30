@@ -3,6 +3,7 @@ import { icon, h, clear, faviconEl } from './icons.js';
 import { POPUPS as ACCOUNT_POPUPS } from './overlay-account.js';
 import { POPUPS as BLOCKER_POPUPS } from './overlay-blocker.js';
 import { POPUPS as PRIVACY_POPUPS } from './overlay-privacy.js';
+import { POPUPS as AGENT_POPUPS } from './overlay-agents.js';
 
 const rootEl = document.getElementById('root');
 const html = document.documentElement;
@@ -472,6 +473,7 @@ const POPUPS = {
   ...ACCOUNT_POPUPS,
   ...BLOCKER_POPUPS,
   ...PRIVACY_POPUPS,
+  ...AGENT_POPUPS,
 };
 
 // ------------------------------------------------------------------------------------- wiring

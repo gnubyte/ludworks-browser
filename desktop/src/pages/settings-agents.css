@@ -1,0 +1,5 @@
+/* Settings → AI agents (settings-agents.js). */
+.ag-pre { margin: 8px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--surface-2, rgba(127, 127, 127, 0.12)); font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; user-select: text; }
+.ag-check { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: 13px; }
+.ag-btns { display: flex; gap: 8px; flex-wrap: wrap; align-self: flex-start; }
+.ag-out { margin-top: 8px; font-size: 13px; gap: 4px; display: flex; flex-direction: column; }

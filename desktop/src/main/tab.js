@@ -87,6 +87,7 @@ export class Tab extends EventEmitter {
       error: this.error,
       bookmarked: url ? this.browser.bookmarks.isBookmarked(url) : false,
       find: this.find,
+      agent: !!this.agentOwned,
     };
   }
 
@@ -137,7 +138,8 @@ export class Tab extends EventEmitter {
       this.url = url;
       this.favicon = null;
       if (!this.error || this.error.url !== url) this.error = this.error && this.error.kind === 'cert-allowed' && hostOf(url) === this.error.host ? this.error : null;
-      if (!this.private && recordable(url) && httpCode !== 204) {
+      // AI agents' browsing (agent/agent.js) stays out of the user's history
+      if (!this.private && !this.agentOwned && recordable(url) && httpCode !== 204) {
         this.browser.history.addVisit({ url, title: '', typed: this.typedNavigation });
       }
       this.typedNavigation = false;
@@ -158,7 +160,7 @@ export class Tab extends EventEmitter {
     wc.on('page-title-updated', (_e, title) => {
       this.title = title;
       const url = wc.getURL();
-      if (!this.private) this.browser.history.setTitle(url, title);
+      if (!this.private && !this.agentOwned) this.browser.history.setTitle(url, title);
       this.update();
     });
     wc.on('page-favicon-updated', (_e, favicons) => this.loadFavicon(favicons));

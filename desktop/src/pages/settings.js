@@ -1,6 +1,7 @@
 // Settings.
 import { h, clear, applyTheme, sideNav, toggle } from './ui.js';
 import { blockerSection } from './settings-blocker.js';
+import { agentsSection } from './settings-agents.js';
 
 const app = document.getElementById('app');
 const main = h('main', { class: 'main' });
@@ -130,6 +131,7 @@ async function render() {
       h('div', { class: 'setting', style: { flexWrap: 'wrap' } }, h('div', { class: 'grow' }, h('div', {}, 'Clear browsing data'), h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px' } }, label(what.history, 'History'), label(what.cookies, 'Cookies and site data'), label(what.cache, 'Cached files'), label(what.downloads, 'Download list'), label(what.permissions, 'Site permissions'))), clearRange, clearBtn),
     ),
     ...blockerSection(call),
+    ...agentsSection(call),
     h('h2', { id: 'sites' }, 'Site permissions'),
     h('div', { class: 'card' }, permList),
     ...section(

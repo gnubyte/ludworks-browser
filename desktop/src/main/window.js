@@ -14,17 +14,22 @@ const PANEL_URL = 'lwshell://ui/panel.html';
 const TITLEBAR_HEIGHT = 40;
 // Transparent margin around popup cards in the overlay view (src/shell/overlay.css #root padding).
 const OVERLAY_PAD = { x: 18, top: 4 };
+// An AI agent's window: the page sits inside a coloured frame the shell draws (src/shell/shell.css .agent).
+const AGENT_FRAME = 3;
 
 export class WindowCtl extends EventEmitter {
   /**
-   * @param {{browser: import('./browser.js').Browser, private?: boolean, bounds?: any, maximized?: boolean, inactive?: boolean}} o
+   * @param {{browser: import('./browser.js').Browser, private?: boolean, bounds?: any, maximized?: boolean, agent?: any, inactive?: boolean}} o
+   *   agent: {client, label, busy, stopped} while an AI agent uses this window (agent/agent.js)
    *   inactive: show without taking focus (a window made for a tab being dragged out: tab-drag.js)
    */
-  constructor({ browser, private: isPrivate = false, bounds = null, maximized = false, inactive = false }) {
+  constructor({ browser, private: isPrivate = false, bounds = null, maximized = false, agent = null, inactive = false }) {
     super();
     this.browser = browser;
     this.private = isPrivate;
-    this.showInactive = inactive;
+    this.agent = agent;
+    // an agent's window must not take the keyboard from what the user is doing
+    this.showInactive = !!agent || inactive;
     this.focusedAt = Date.now(); // the most recently focused window is the frontmost one (tab-drag.js)
     this.tabStrip = null; // {tabs: [{id, left, right}], bottom} reported by the shell, for dropping dragged tabs
     this.session = isPrivate ? browser.privateSession() : browser.session;
@@ -167,7 +172,8 @@ export class WindowCtl extends EventEmitter {
     tab.lastActive = Date.now();
     this.hidePopup();
     this.layout();
-    if (focus && !this.shellFocused) tab.wc.focus();
+    // an agent switching tabs in its window must not pull that window in front of the user's work
+    if (focus && !this.shellFocused && !(this.agent && !this.win.isFocused())) tab.wc.focus();
     this.sendState();
   }
 
@@ -268,7 +274,8 @@ export class WindowCtl extends EventEmitter {
     const [width, height] = this.win.getContentSize();
     const full = this.win.isFullScreen() && this.htmlFullscreenTab;
     const top = full ? 0 : this.topInset;
-    return { x: 0, y: top, width, height: Math.max(0, height - top) };
+    const f = this.agent && !full ? AGENT_FRAME : 0;
+    return { x: f, y: top, width: Math.max(0, width - 2 * f), height: Math.max(0, height - top - f) };
   }
 
   layout() {
@@ -457,7 +464,7 @@ export class WindowCtl extends EventEmitter {
       this.stateTimer = null;
       if (this.destroyed || this.shell.isDestroyed()) return;
       const t = this.activeTab();
-      const title = `${(t && t.title) || 'New Tab'} - Ludworks Browser${this.private ? ' (Private)' : ''}`;
+      const title = `${this.agent ? `${this.agent.client} · ` : ''}${(t && t.title) || 'New Tab'} - Ludworks Browser${this.private ? ' (Private)' : ''}`;
       if (this.win.getTitle() !== title) this.win.setTitle(title);
       this.shell.send('state', this.state());
     }, 16);
@@ -471,6 +478,7 @@ export class WindowCtl extends EventEmitter {
       maximized: this.win.isMaximized(),
       fullscreen: this.win.isFullScreen(),
       htmlFullscreen: !!this.htmlFullscreenTab,
+      agent: this.agent,
       activeId: this.activeId,
       tabs: this.tabs.map((t) => t.snapshot()),
       keyState: this.browser.autofill ? this.browser.autofill.keyStateFor(this.activeTab()) : null,
