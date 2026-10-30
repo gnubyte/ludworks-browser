@@ -11,6 +11,7 @@ import { ServerTransport, normalizeFp, formatFp } from './net.js';
 import { VaultStore } from './vault.js';
 import { BrowserSync } from './browsersync.js';
 import { readSecret, writeSecret, secretsAvailable } from './files.js';
+import { osTrustSupported, certIds, addTrusted, isTrusted } from './os-trust.js';
 import { summarizeItem, byName, cloneJson, newItem, newLoginItem, ITEM_TYPES } from '../../lib/item-model.js';
 import { generatePassword, generatePassphrase, estimateStrength, PASSWORD_DEFAULTS, PASSPHRASE_DEFAULTS } from '../../lib/generator.js';
 import { generateTotp } from '../../lib/totp.js';
@@ -24,6 +25,8 @@ const SYNC_EVERY_MS = 5 * 60 * 1000;
 const BROWSER_SYNC_RECHECK_MS = 30 * 60 * 1000;
 const BROWSER_SYNC_MISSING = 'This Ludworks server cannot sync bookmarks, history, tabs and settings yet — update the server. Passwords and passkeys sync normally.';
 const OFFLINE = new Set(['network_error', 'timeout']);
+// How often the server is asked whether it announced a renewal of its self-signed certificate.
+const CERT_CHECK_MS = 6 * 60 * 60 * 1000;
 
 function err(code, message, extra = {}) {
   return new ApiError({ code, message, ...extra });
@@ -44,6 +47,7 @@ export class Account {
     this.acc = readSecret(this.accountFile); // {serverUrl, token, expiresAt, user, serverName, pin}
     this.memoryOnly = !secretsAvailable();
     if (this.acc && this.acc.pin) this.transport.setPin(new URL(this.acc.serverUrl).hostname, this.acc.pin);
+    if (this.acc && this.acc.nextPin) this.transport.setNextPin(new URL(this.acc.serverUrl).hostname, this.acc.nextPin);
     this.vault = new VaultStore({ dir: this.dir, api: () => this.api() });
     this.sync = new BrowserSync({ browser, api: () => this.api() });
     this.status = { syncing: false, lastSyncAt: null, error: null, warning: null };
@@ -103,6 +107,9 @@ export class Account {
       secureStorage: !this.memoryOnly,
       initialized: !!(meta && meta.initialized),
       tokenExpiresAt: this.acc ? this.acc.expiresAt || null : null,
+      // Windows trust of the pinned self-signed certificate (offered only for a pinned server on Windows)
+      osTrust: { supported: osTrustSupported && !!(this.acc && this.acc.pin), enabled: !!(this.acc && this.acc.osTrust), trusted: !!(this.acc && this.acc.osTrust && this.acc.osTrust.certs.includes(this.acc.pin)) },
+      certChanged: this.status.certChanged || null,
     };
   }
 
@@ -210,12 +217,17 @@ export class Account {
           this.status.warning = BROWSER_SYNC_MISSING;
         }
       }
+      this.status.certChanged = null;
+      await this.followCertificate().catch((e) => log.info('certificate renewal check failed', { code: e && e.code, message: e && e.message }));
       this.status.lastSyncAt = Date.now();
       this.status.error = null;
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) await this.sessionExpired();
       else if (e instanceof ApiError && e.code === 'vault_key_changed') this.onKeyChanged();
-      else this.status.error = errorInfo(e);
+      else {
+        this.status.error = errorInfo(e);
+        this.status.certChanged = this.changedCertificate();
+      }
       throw e;
     } finally {
       this.status.syncing = false;
@@ -317,6 +329,103 @@ export class Account {
     this.transport.setPin(host, fp);
     this.pendingPin = { host, fp };
     this.b.pinnedHosts.set(host, fp);
+    // Signed in to this server and its certificate changed: the user confirmed the new one.
+    if (this.acc && new URL(this.acc.serverUrl).hostname === host && this.acc.pin !== fp) {
+      this.acc.pin = fp;
+      this.acc.nextPin = null;
+      this.transport.setNextPin(host, null);
+      this.b.pinnedNext.delete(host);
+      this.saveAccount();
+      this.status.certChanged = null;
+      this.status.error = null;
+      this.syncNow().catch(() => {}); // also brings Windows trust along (followCertificate)
+    }
+  }
+
+  /** The signed-in server presents a certificate that is neither the pinned one nor its announced renewal. */
+  changedCertificate() {
+    const acc = this.acc;
+    if (!acc || !acc.pin) return null;
+    const host = new URL(acc.serverUrl).hostname;
+    const seen = this.transport.lastSeen(host);
+    if (!seen || seen.trusted || !seen.fingerprint || seen.fingerprint === acc.pin || seen.fingerprint === acc.nextPin) return null;
+    return { serverUrl: acc.serverUrl, host, trust: 'changed', fingerprint: formatFp(seen.fingerprint), fingerprintHex: seen.fingerprint, pinned: formatFp(acc.pin) };
+  }
+
+  /**
+   * Follow a renewal of the server's self-signed certificate. The server announces its successor in
+   * the setup status, read over the pinned connection (so the announcement is authentic); the browser
+   * accepts it ahead of the switch and makes it the pin once the server presents it. With Windows
+   * trust on, the new certificate is added to Windows too (Windows asks once per certificate).
+   */
+  async followCertificate({ force = false } = {}) {
+    const acc = this.acc;
+    if (!acc || !acc.pin) return;
+    const host = new URL(acc.serverUrl).hostname;
+    const seen = this.transport.lastSeen(host);
+    if (acc.nextPin && seen && seen.fingerprint === acc.nextPin) {
+      acc.pin = acc.nextPin;
+      acc.nextPin = null;
+      this.transport.setPin(host, acc.pin);
+      this.transport.setNextPin(host, null);
+      this.b.pinnedHosts.set(host, acc.pin);
+      this.b.pinnedNext.delete(host);
+      this.saveAccount();
+    }
+    if (acc.osTrust && seen && seen.fingerprint === acc.pin && seen.pem) await this.addToOs(seen.pem);
+    if (!force && Date.now() - (this.certCheckedAt || 0) < CERT_CHECK_MS) return;
+    this.certCheckedAt = Date.now();
+    const st = await this.transport.api(acc.serverUrl).setupStatus();
+    const next = normalizeFp(st && st.tls_next_fingerprint_sha256);
+    const pem = st && typeof st.tls_next_certificate === 'string' ? st.tls_next_certificate : '';
+    if (!next || next === acc.pin || !pem) return;
+    let ids;
+    try {
+      ids = certIds(pem);
+    } catch {
+      return;
+    }
+    if (ids.sha256 !== next) return;
+    if (acc.nextPin !== next) {
+      acc.nextPin = next;
+      this.transport.setNextPin(host, next);
+      this.b.pinnedNext.set(host, next);
+      this.saveAccount();
+    }
+    if (acc.osTrust) await this.addToOs(pem);
+  }
+
+  /** Add a certificate to Windows (once per certificate: a "No" in Windows' prompt is not asked again). */
+  async addToOs(pem) {
+    const t = this.acc && this.acc.osTrust;
+    if (!t) return false;
+    const { sha256 } = certIds(pem);
+    if (t.certs.includes(sha256) || t.declined.includes(sha256)) return t.certs.includes(sha256);
+    const ok = await addTrusted(pem);
+    (ok ? t.certs : t.declined).push(sha256);
+    this.saveAccount();
+    this.changed();
+    return ok;
+  }
+
+  /** "Trust in Windows": add the pinned certificate now and keep Windows in step with renewals. */
+  async trustInOs() {
+    const acc = this.acc;
+    if (!osTrustSupported) throw err('unsupported', 'Adding certificates to the system is only available on Windows.');
+    if (!acc || !acc.pin) throw err('not_pinned', 'This server does not use a self-signed certificate you confirmed.');
+    const host = new URL(acc.serverUrl).hostname;
+    await this.transport.api(acc.serverUrl).setupStatus(); // a fresh request, so the presented certificate is known
+    const seen = this.transport.lastSeen(host);
+    if (!seen || seen.fingerprint !== acc.pin || !seen.pem) throw err('certificate_changed', 'The server presents a different certificate than the one you confirmed.');
+    // A button press asks again even after an earlier "No", and re-adds a certificate removed in Windows.
+    const ids = certIds(seen.pem);
+    const prev = (acc.osTrust && acc.osTrust.certs) || [];
+    acc.osTrust = { certs: (await isTrusted(ids.sha1)) ? prev : prev.filter((fp) => fp !== ids.sha256), declined: [] };
+    this.saveAccount();
+    const ok = await this.addToOs(seen.pem);
+    if (!ok) throw err('declined', 'Windows did not add the certificate (the prompt was declined).');
+    await this.followCertificate({ force: true }).catch(() => {});
+    return this.summary();
   }
 
   // ------------------------------------------------------------------------------- sign in/out
@@ -483,6 +592,8 @@ export class Account {
       case 'account.trust':
         this.trust(str(a.serverUrl, 2048), str(a.fingerprint, 200));
         return this.probe(str(a.serverUrl, 2048));
+      case 'account.trust-os':
+        return this.trustInOs();
       case 'account.signin':
         return this.signIn({ serverUrl: str(a.serverUrl, 2048), username: str(a.username, 320), password: str(a.password, 1024), totpCode: str(a.totpCode, 16) || undefined, recoveryCode: str(a.recoveryCode, 64) || undefined });
       case 'account.signout':

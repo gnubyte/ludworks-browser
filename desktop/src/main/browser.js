@@ -43,6 +43,7 @@ export class Browser {
     this.quitting = false;
     this.certAllowances = new Map(); // host → Set(fingerprint) allowed by the user this session
     this.pinnedHosts = new Map(); // host → fingerprint (Ludworks server pin, set by the account service)
+    this.pinnedNext = new Map(); // host → fingerprint the Ludworks server announced as its renewal
     this.pendingPermission = new Map(); // tab id → [{...}]
     this.shortcuts = new Shortcuts(this);
     this.tabDrag = new TabDrag(this, () => screen.getCursorScreenPoint());
@@ -72,6 +73,7 @@ export class Browser {
     const { Passkeys } = await import('./passkeys.js');
     this.account = new Account(this);
     if (this.account.acc && this.account.acc.pin) this.pinnedHosts.set(new URL(this.account.acc.serverUrl).hostname, this.account.acc.pin);
+    if (this.account.acc && this.account.acc.nextPin) this.pinnedNext.set(new URL(this.account.acc.serverUrl).hostname, this.account.acc.nextPin);
     this.autofill = new Autofill(this);
     this.passkeys = new Passkeys(this);
     const { Privacy } = await import('./privacy/privacy.js');
@@ -87,6 +89,9 @@ export class Browser {
     const { MediaSaver } = await import('./media/media.js');
     this.media = new MediaSaver(this);
     this.registerFeature(this.media);
+    const { Recorder } = await import('./recorder.js');
+    this.recorder = new Recorder(this);
+    this.registerFeature(this.recorder);
     const { Extensions } = await import('./extensions/extensions.js');
     this.extensions = new Extensions(this);
     this.registerFeature(this.extensions);
@@ -165,6 +170,8 @@ export class Browser {
       // accepted for that host; everything else gets Chromium's normal verdict.
       const pin = this.pinnedHosts.get(req.hostname);
       if (pin && fingerprintMatches(req.certificate, pin)) return cb(0);
+      const next = this.pinnedNext.get(req.hostname);
+      if (next && fingerprintMatches(req.certificate, next)) return cb(0);
       cb(-3);
     });
   }
