@@ -51,6 +51,89 @@ function choice(content, onChoose) {
   return row;
 }
 
+/** Brief check mark on a copy button once the copy went through. */
+function copied(btn, r, iconName) {
+  if (!r || r.ok === false) return;
+  btn.replaceChildren(icon('check', { size: 14 }));
+  btn.classList.add('copied');
+  setTimeout(() => {
+    btn.replaceChildren(icon(iconName, { size: 14 }));
+    btn.classList.remove('copied');
+  }, 1200);
+}
+
+/**
+ * One-time (MFA) codes in the key popup: each login with a TOTP secret gets a chip showing its current
+ * code and a ring that empties as the code runs out (it turns orange in the last 5 seconds); a click
+ * copies the code. Codes come from the browser (`key:totp`) and are fetched again when they roll over;
+ * the ticker stops when the popup closes or re-renders.
+ */
+function totpTicker(box) {
+  const chips = [];
+  let loading = false;
+  const refresh = async () => {
+    if (loading || !chips.length) return;
+    loading = true;
+    try {
+      const r = await act('key', 'totp', { ids: chips.map((c) => c.id) });
+      const now = Date.now();
+      for (const c of chips) {
+        const v = r && r.ok && r.value ? r.value[c.id] : null;
+        c.code.textContent = v ? formatCode(v.code) : '—';
+        c.period = v ? v.period : 30;
+        c.expires = v ? now + v.remaining * 1000 : 0;
+      }
+    } finally {
+      loading = false;
+    }
+    tick();
+  };
+  const tick = () => {
+    if (!box.isConnected) return clearInterval(timer);
+    const now = Date.now();
+    let stale = false;
+    for (const c of chips) {
+      if (!c.expires) continue;
+      const left = Math.max(0, (c.expires - now) / 1000);
+      if (left <= 0) stale = true;
+      c.ring.style.setProperty('--p', `${Math.round((left / c.period) * 360)}deg`);
+      c.btn.classList.toggle('expiring', left <= 5);
+      c.btn.title = `Copy one-time code (MFA) · ${Math.ceil(left)} s left`;
+    }
+    if (stale) refresh();
+  };
+  const timer = setInterval(tick, 1000);
+  setTimeout(refresh, 0);
+  return {
+    chip(it) {
+      const code = h('span', { class: 'totp-code' }, '··· ···');
+      const ring = h('span', { class: 'totp-ring', 'aria-hidden': 'true' });
+      const btn = h('button', {
+        class: 'btn small totp',
+        title: 'Copy one-time code (MFA)',
+        'aria-label': 'Copy one-time code',
+        onclick: async (e) => {
+          e.stopPropagation();
+          const r = await act('key', 'copy', { id: it.id, field: 'totp' });
+          if (!r || r.ok === false) return;
+          btn.classList.add('copied');
+          setTimeout(() => btn.classList.remove('copied'), 1200);
+        },
+      }, ring, code);
+      chips.push({ id: it.id, code, ring, btn, period: 30, expires: 0 });
+      return btn;
+    },
+  };
+}
+
+/** "123456" → "123 456", "12345678" → "1234 5678" (as authenticator apps show them). */
+export function formatCode(code) {
+  const s = String(code || '');
+  if (/^\d{6}$/.test(s)) return `${s.slice(0, 3)} ${s.slice(3)}`;
+  if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)} ${s.slice(4)}`;
+  return s;
+}
+
 export const POPUPS = {
   // ------------------------------------------------------------------ dropdown under a field
   fill(d, ctx) {
@@ -129,8 +212,12 @@ export const POPUPS = {
       const list = h('div', { class: 'list scroll' });
       const rows = []; // [{row, text}] for the search box
       if (!data.items.length) list.append(h('div', { class: 'pad muted' }, 'No saved logins for this site.'));
+      const codes = totpTicker(box);
       for (const it of data.items) {
-        const copy = (field, label) => h('button', { class: 'icon-btn small', title: `Copy ${label}`, 'aria-label': `Copy ${label}`, onclick: async (e) => { e.stopPropagation(); await act('key', 'copy', { id: it.id, field }); } }, icon(field === 'totp' ? 'history' : field === 'username' ? 'user' : 'copy', { size: 14 }));
+        const copy = (field, label) => {
+          const btn = h('button', { class: 'icon-btn small', title: `Copy ${label}`, 'aria-label': `Copy ${label}`, onclick: async (e) => { e.stopPropagation(); copied(btn, await act('key', 'copy', { id: it.id, field }), field === 'username' ? 'user' : 'lock'); } }, icon(field === 'username' ? 'user' : 'lock', { size: 14 }));
+          return btn;
+        };
         const row = h(
           'div',
           { class: 'item' },
@@ -138,7 +225,7 @@ export const POPUPS = {
           h('span', { class: 'grow' }, h('div', { class: 't' }, it.name), h('div', { class: 's' }, `${it.username || '—'}${it.passkeys ? ` · ${it.passkeys} passkey${it.passkeys > 1 ? 's' : ''}` : ''}${it.otherHost ? ' · other host' : ''}`)),
           copy('username', 'username'),
           copy('password', 'password'),
-          it.totp ? copy('totp', 'one-time code') : null,
+          it.totp ? codes.chip(it) : null,
           h('button', {
             class: 'btn small primary',
             onclick: async () => {

@@ -478,6 +478,22 @@ export class Autofill {
           copySecret(String(field || ''));
           return { ok: true };
         }
+        case 'key:totp': {
+          // Current one-time codes for the key popup's chips (logins of this popup with a TOTP secret).
+          const out = {};
+          for (const id of Array.isArray(d.ids) ? d.ids.slice(0, KEY_BUBBLE_MAX) : []) {
+            const e = await this.b.account.vault.get(String(id)).catch(() => null);
+            const secret = e && e.data && e.data.login && e.data.login.totp;
+            if (typeof secret !== 'string' || !secret.trim()) continue;
+            try {
+              const t = await generateTotp(secret, Date.now());
+              out[String(id)] = { code: t.code, period: t.period, remaining: t.remaining };
+            } catch {
+              /* malformed secret: the chip shows a dash */
+            }
+          }
+          return { ok: true, value: out };
+        }
         case 'key:generate':
           return { ok: true, value: generatePassword({ ...PASSWORD_DEFAULTS }) };
         case 'key:signin':
