@@ -167,6 +167,36 @@ function footer(s, rerender, { lock = true } = {}) {
   );
 }
 
+/** The signed-in server's certificate changed: confirm the new one here (no new sign-in needed). */
+function certChangedNotice(s, rerender) {
+  const c = s.certChanged;
+  if (!c) return null;
+  const err = errorBox();
+  return h(
+    'div',
+    { class: 'stack' },
+    h('div', { class: 'notice warn' }, 'The server presents a new certificate. Only confirm it if you know the server changed it (an update or a renewal).'),
+    h('div', { class: 'field' }, h('span', {}, 'New SHA-256 fingerprint'), h('div', { class: 'mono' }, c.fingerprint)),
+    h('div', { class: 'field' }, h('span', {}, 'Fingerprint you trusted before'), h('div', { class: 'mono' }, c.pinned)),
+    err.el,
+    h('button', { class: 'btn primary', onclick: async (e) => { const r = await run('account.trust', { serverUrl: c.serverUrl, fingerprint: c.fingerprintHex }, err, e.currentTarget); if (r) { const s2 = await call('account.summary', {}); if (s2 && s2.ok) rerender(s2.value); } } }, 'The new fingerprint matches — trust it'),
+  );
+}
+
+/** "Trust in Windows" (pinned self-signed server on Windows), or its state. */
+function osTrustRow(s, rerender) {
+  const t = s.osTrust;
+  if (!t || !t.supported) return null;
+  if (t.trusted) return h('div', { class: 'row sub' }, icon('check', { size: 15 }), 'Windows trusts this server’s certificate (kept up to date)');
+  const err = errorBox();
+  return h(
+    'div',
+    { class: 'stack' },
+    h('button', { class: 'btn', title: 'Adds this server’s certificate to Windows, so Chrome, Edge and other apps trust it too. Windows asks you to confirm.', onclick: async (e) => { const r = await run('account.trust-os', {}, err, e.currentTarget); if (r) rerender(r.value); } }, icon('shield', { size: 15 }), 'Trust this server in Windows'),
+    err.el,
+  );
+}
+
 function unlockedView(root, s, rerender) {
   const err = errorBox();
   const syncBtn = h('button', { class: 'btn', onclick: async (e) => { const r = await run('account.sync', {}, err, e.currentTarget); if (r) rerender(r.value); } }, icon('sync', { size: 15 }), s.syncing ? 'Syncing…' : 'Sync now');
@@ -177,10 +207,11 @@ function unlockedView(root, s, rerender) {
       { class: 'pad stack' },
       h('div', { class: 'row' }, icon('check', { size: 16 }), h('span', {}, `${s.itemCount} vault item${s.itemCount === 1 ? '' : 's'} · synced ${ago(s.lastSyncAt)}`)),
       s.warning ? h('div', { class: 'notice warn' }, s.warning) : null,
-      s.error ? h('div', { class: 'notice warn' }, s.error.message) : null,
+      certChangedNotice(s, rerender) || (s.error ? h('div', { class: 'notice warn' }, s.error.message) : null),
       err.el,
       h('div', { class: 'row' }, syncBtn, h('button', { class: 'btn', onclick: () => call('account.open', { page: 'passwords' }) }, icon('key', { size: 15 }), 'Passwords'), h('button', { class: 'btn', onclick: () => call('account.open', { page: 'sync' }) }, 'Sync settings')),
       h('button', { class: 'btn', onclick: () => call('account.open-web', {}) }, icon('external', { size: 15 }), `Open ${s.serverName || 'Ludworks'}`),
+      osTrustRow(s, rerender),
     ),
     footer(s, rerender),
   );

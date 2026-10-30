@@ -4,6 +4,7 @@ import { setupChromeApi } from './chrome-api.js';
 import { setupWebAuthn } from './webauthn.js';
 import { setupBlocker } from './blocker.js';
 import { setupMedia } from './media.js';
+import { setupRecorder } from './recorder.js';
 
 if (location.protocol === 'https:' || location.protocol === 'http:') {
   try {
@@ -27,4 +28,5 @@ if (location.protocol === 'https:' || location.protocol === 'http:') {
     /* keep the page working without autofill */
   }
   setupMedia(); // image/video saver: idle until the user opens it (never throws)
+  setupRecorder(); // "Record video from now": idle until the user starts it (never throws)
 }

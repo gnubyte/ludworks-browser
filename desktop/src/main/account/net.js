@@ -31,15 +31,17 @@ export function formatFp(hex) {
 export class ServerTransport {
   constructor() {
     this.pins = new Map(); // host → hex fingerprint
-    this.seen = new Map(); // host → {fingerprint, trusted (CA), at}
+    this.nextPins = new Map(); // host → hex fingerprint the server announced as its renewal (over the pinned connection)
+    this.seen = new Map(); // host → {fingerprint, pem, trusted (CA), at}
     this.ses = session.fromPartition(PARTITION);
     this.ses.setCertificateVerifyProc((req, cb) => {
       const fp = fingerprintHex(req.certificate.fingerprint);
       const caTrusted = req.verificationResult === 'net::OK';
-      this.seen.set(req.hostname, { fingerprint: fp, trusted: caTrusted, at: Date.now(), error: caTrusted ? null : req.verificationResult });
+      this.seen.set(req.hostname, { fingerprint: fp, pem: req.certificate.data, trusted: caTrusted, at: Date.now(), error: caTrusted ? null : req.verificationResult });
       if (caTrusted) return cb(0); // publicly / OS-trusted certificate for this host name
       const pin = this.pins.get(req.hostname);
-      cb(pin && pin === fp ? 0 : -2); // self-signed: exactly the certificate the user confirmed
+      const next = this.nextPins.get(req.hostname);
+      cb((pin && pin === fp) || (next && next === fp) ? 0 : -2); // self-signed: exactly the certificate the user confirmed (or its announced renewal)
     });
     this.ses.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
   }
@@ -47,6 +49,11 @@ export class ServerTransport {
   setPin(host, hex) {
     if (hex) this.pins.set(host, hex);
     else this.pins.delete(host);
+  }
+
+  setNextPin(host, hex) {
+    if (hex) this.nextPins.set(host, hex);
+    else this.nextPins.delete(host);
   }
 
   lastSeen(host) {
