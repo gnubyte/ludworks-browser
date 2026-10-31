@@ -17,7 +17,8 @@ import { fixupInput, originOf, hostOf, displayUrl } from './util/urls.js';
 import { currentEngine, searchUrl, fetchSuggestions, ENGINES } from './search.js';
 import { chromeUserAgent } from './util/ua.js';
 import { log } from './util/log.js';
-import { APP_NAME } from './paths.js';
+import { APP_NAME, defaultProfileDir } from './paths.js';
+import { canMove, isSeparateProfile, launch, otherEngineCommand } from './separate.js';
 import { DefaultBrowser } from './default-browser.js';
 import { WebRequestHub } from './webrequest.js';
 import { tabWebPreferences } from './tab.js';
@@ -30,6 +31,7 @@ export class Browser {
   constructor({ profileDir, explicitProfile, appDir }) {
     this.profileDir = profileDir;
     this.explicitProfile = explicitProfile;
+    this.separateProcess = isSeparateProfile(profileDir); // the second engine process (separate.js)
     this.appDir = appDir;
     this.dev = !app.isPackaged || process.env.LUDWORKS_DEV === '1';
     this.paths = {
@@ -234,6 +236,21 @@ export class Browser {
     const b = from.win.getNormalBounds();
     const to = this.newWindow({ private: from.private, empty: true, bounds: { x: b.x + 30, y: b.y + 30, width: b.width, height: b.height } });
     this.moveTabToWindow(tab, to);
+  }
+
+  /**
+   * Moves a tab into the other engine process (separate.js): the separate one from the main process, the main one
+   * from the separate process. The page loads afresh there; the tab closes here once that process has started.
+   */
+  moveTabToOtherEngine(tab) {
+    const url = tab.wc.isDestroyed() ? tab.url : tab.wc.getURL() || tab.url;
+    if (!canMove(url)) return;
+    const cmd = otherEngineCommand({ execPath: process.execPath, appPath: process.defaultApp ? app.getAppPath() : null, profileDir: this.profileDir, defaultProfileDir: defaultProfileDir(), url });
+    launch(cmd)
+      .then(() => {
+        if (!tab.destroyed) tab.ctl.closeTab(tab.id);
+      })
+      .catch((e) => log.warn('could not start the other engine process', { message: e.message }));
   }
 
   rememberWindowState(ctl) {
@@ -873,6 +890,7 @@ export class Browser {
       account: this.account ? this.account.summary() : { phase: 'logged_out' },
       dev: this.dev,
       version: app.getVersion(),
+      separateProcess: this.separateProcess,
     };
   }
 
@@ -1293,6 +1311,8 @@ export class Browser {
         return `${title.length > 40 ? `${title.slice(0, 40)}…` : title}${w.tabs.length > 1 ? ` and ${w.tabs.length - 1} more` : ''}`;
       };
       if (others.length) move.push({ label: 'Move to window', submenu: others.map((w) => ({ label: name(w), click: () => this.moveTabToWindow(tab, w) && w.win.focus() })) });
+      // never out of a private window: the other process keeps what it loads
+      if (!ctl.private) move.push({ label: this.separateProcess ? 'Move to main process' : 'Move to separate process', enabled: canMove(tab.wc.getURL()), click: () => this.moveTabToOtherEngine(tab) });
     }
     Menu.buildFromTemplate([
       { label: 'New tab to the right', click: () => ctl.newTab({ index: i + 1 }) },

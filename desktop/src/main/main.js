@@ -10,6 +10,7 @@ import { log, setLogFile } from './util/log.js';
 
 const explicitProfile = profileDirFromArgs(process.argv);
 const profileDir = explicitProfile || defaultProfileDir();
+import { isSeparateProfile, samePath } from './separate.js';
 app.setName(APP_NAME);
 app.setPath('userData', profileDir);
 setLogFile(path.join(profileDir, 'logs', 'main.log'));
@@ -22,8 +23,9 @@ process.on('unhandledRejection', (e) => log.warn('unhandled promise rejection', 
 if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
 // Remote debugging hands every cookie and open page to whoever connects. Like Chrome 136+, it is
-// only honoured for a non-default profile directory (tests, developer profiles).
-if (!explicitProfile) {
+// only honoured for a non-default profile directory (tests, developer profiles): not for the default
+// one even when named, nor for a separate-process profile (separate.js), which holds sign-ins too.
+if (!explicitProfile || samePath(profileDir, defaultProfileDir()) || isSeparateProfile(profileDir)) {
   for (const sw of ['remote-debugging-port', 'remote-debugging-pipe', 'remote-allow-origins']) app.commandLine.removeSwitch(sw);
 }
 

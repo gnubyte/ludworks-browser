@@ -649,12 +649,25 @@ function renderAgent() {
   );
 }
 
+// A window of the separate engine process (src/main/separate.js): a chip in the tab strip says so.
+function renderSeparate() {
+  const chip = $('separate-chip');
+  if (!state.separateProcess) {
+    if (chip) chip.remove();
+    return;
+  }
+  if (chip) return;
+  const tip = 'This window runs in a separate process with its own GPU process, so heavy pages here and in your other windows do not slow each other down. Sites here keep their own sign-ins.';
+  $('tabstrip').insertBefore(h('div', { id: 'separate-chip', title: tip }, icon('layers', { size: 14 }), 'Separate process'), $('wincontrols'));
+}
+
 function render(s) {
   state = s;
   root.dataset.theme = s.theme;
   root.dataset.fullscreen = String(!!s.fullscreen);
   root.dataset.htmlfs = String(!!s.htmlFullscreen);
   renderAgent();
+  renderSeparate();
   renderTabs();
   renderToolbar();
   renderFeatureButtons();

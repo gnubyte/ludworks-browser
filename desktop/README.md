@@ -68,6 +68,11 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   permissions, commands, storage.sync and webNavigation; APIs Electron lacks (declarativeNetRequest, blocking
   webRequest, identity, native messaging, side panel, userScripts…) are left undefined and listed per extension.
   Extensions cannot script or open ludworks:// pages and are not loaded in private windows.
+* **Separate process** (`src/main/separate.js`): "Move to separate process" in the tab menu opens the page in a second
+  browser instance with its own GPU process, so two heavy pages (a WebGL game and a live stream) stop slowing each
+  other down. Chromium draws all of a browser's windows through one GPU process, Chrome and Edge included. That
+  instance runs on its own profile (`<profile>/Separate Process`), so sites there keep their own sign-ins; its windows
+  show a "Separate process" chip, and "Move to main process" goes back.
 * **Picture in picture** (`src/main/pip.js`): toolbar button when the page has a video, Ctrl+Shift+P, right-click a
   video (also inside iframes); optional automatic picture in picture when you switch away from a playing video.
 * **Image and video saver** (`src/main/media/`): toolbar badge counting the page's images and videos; a popup with
