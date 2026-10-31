@@ -18,7 +18,7 @@ import { currentEngine, searchUrl, fetchSuggestions, ENGINES } from './search.js
 import { chromeUserAgent } from './util/ua.js';
 import { log } from './util/log.js';
 import { APP_NAME, defaultProfileDir } from './paths.js';
-import { canMove, isSeparateProfile, launch, otherEngineCommand } from './separate.js';
+import { canMove, isSeparateProfile, launch, otherEngineCommand, SeparateProcess } from './separate.js';
 import { DefaultBrowser } from './default-browser.js';
 import { WebRequestHub } from './webrequest.js';
 import { tabWebPreferences } from './tab.js';
@@ -84,6 +84,8 @@ export class Browser {
     const { Pip } = await import('./pip.js');
     this.pip = new Pip(this);
     this.registerFeature(this.pip);
+    this.separate = new SeparateProcess(this);
+    this.registerFeature(this.separate);
     setInterval(() => this.privacy.sweep(new Set(allWebContents.getAllWebContents().map((w) => w.id))), 60 * 1000).unref();
     const { Blocker } = await import('./blocker/blocker.js');
     this.blocker = new Blocker(this);
@@ -112,6 +114,7 @@ export class Browser {
     await Promise.all([this.blocker.whenReady(1500), this.extensions.whenReady(2500)]);
     const restored = this.prefs.get('startup') === 'restore' ? this.restoreSession() : 0;
     const urls = [...this.urlsFromArgv(argv), ...earlyUrls];
+    this.separate.onCommandLine(argv, urls);
     const firstRun = !this.db.getMeta('welcomed', false);
     if (firstRun) this.db.setMeta('welcomed', true);
     if (!restored) this.newWindow({ urls: urls.length ? urls : [firstRun ? 'ludworks://welcome/' : this.newTabUrl()] });
@@ -241,16 +244,26 @@ export class Browser {
   /**
    * Moves a tab into the other engine process (separate.js): the separate one from the main process, the main one
    * from the separate process. The page loads afresh there; the tab closes here once that process has started.
+   * A site moved to the separate process opens there from now on (SeparateProcess).
    */
   moveTabToOtherEngine(tab) {
     const url = tab.wc.isDestroyed() ? tab.url : tab.wc.getURL() || tab.url;
     if (!canMove(url)) return;
-    const cmd = otherEngineCommand({ execPath: process.execPath, appPath: process.defaultApp ? app.getAppPath() : null, profileDir: this.profileDir, defaultProfileDir: defaultProfileDir(), url });
-    launch(cmd)
+    if (!this.separateProcess) this.separate.remember(url);
+    this.openInOtherEngine(url)
       .then(() => {
         if (!tab.destroyed) tab.ctl.closeTab(tab.id);
       })
-      .catch((e) => log.warn('could not start the other engine process', { message: e.message }));
+      .catch(() => {});
+  }
+
+  /** Opens `url` in the other engine process (started, or reached through its single-instance lock). */
+  openInOtherEngine(url) {
+    const cmd = otherEngineCommand({ execPath: process.execPath, appPath: process.defaultApp ? app.getAppPath() : null, profileDir: this.profileDir, defaultProfileDir: defaultProfileDir(), url });
+    return launch(cmd).catch((e) => {
+      log.warn('could not start the other engine process', { message: e.message });
+      throw e;
+    });
   }
 
   rememberWindowState(ctl) {
@@ -295,6 +308,7 @@ export class Browser {
     if (this.agentRequest(argv) && !this.urlsFromArgv(argv).length) return;
     const isPrivate = argv.includes('--incognito') || argv.includes('--private') || argv.includes('--inprivate');
     const urls = this.urlsFromArgv(argv);
+    this.separate.onCommandLine(argv, urls);
     if (isPrivate || argv.includes('--new-window')) this.newWindow({ urls, private: isPrivate });
     else if (urls.length) this.openUrls(urls);
     else this.ensureWindow();
@@ -488,6 +502,12 @@ export class Browser {
     if (/^ludworks:/i.test(url) && !/^ludworks:/i.test(tab.wc.getURL())) return { action: 'deny' };
     const ctl = tab.ctl;
     const background = disposition === 'background-tab';
+    // A remembered site (separate.js) opens in the separate process, not in a new tab here. Sized popups (sign-in,
+    // payment) stay with their opener.
+    if (!(disposition === 'new-window' && details.features) && this.separate.shouldDivert(tab, url)) {
+      this.openInOtherEngine(url).catch(() => ctl.newTab({ url, active: !background, opener: tab }));
+      return { action: 'deny' };
+    }
     // Websites opened from an internal page (e.g. "Open" on the Passwords page) get a normal tab of their
     // own: no window.opener back to the ludworks:// page, and the usual content preload (autofill, passkeys).
     if (/^ludworks:/i.test(tab.wc.getURL()) && !/^ludworks:/i.test(url)) {
@@ -1143,6 +1163,9 @@ export class Browser {
     switch (cmd) {
       case 'shortcut':
         if (frame === tab.wc.mainFrame || frame) this.shortcuts.unhandled(tab.ctl, tab, args);
+        break;
+      case 'gpu.heavy':
+        this.separate.gpuHeavy(tab);
         break;
       default:
         this.autofill.contentMessage(tab, frame, cmd, args);

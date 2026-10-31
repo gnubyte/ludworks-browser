@@ -5,6 +5,7 @@ import { setupWebAuthn } from './webauthn.js';
 import { setupBlocker } from './blocker.js';
 import { setupMedia } from './media.js';
 import { setupRecorder } from './recorder.js';
+import { setupGpuMeter } from './gpu-meter.js';
 
 if (location.protocol === 'https:' || location.protocol === 'http:') {
   try {
@@ -29,4 +30,9 @@ if (location.protocol === 'https:' || location.protocol === 'http:') {
   }
   setupMedia(); // image/video saver: idle until the user opens it (never throws)
   setupRecorder(); // "Record video from now": idle until the user starts it (never throws)
+  try {
+    setupGpuMeter(); // GPU-heavy pages move to the separate process (src/main/separate.js)
+  } catch {
+    /* the page just is not measured */
+  }
 }

@@ -72,7 +72,11 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   browser instance with its own GPU process, so two heavy pages (a WebGL game and a live stream) stop slowing each
   other down. Chromium draws all of a browser's windows through one GPU process, Chrome and Edge included. That
   instance runs on its own profile (`<profile>/Separate Process`), so sites there keep their own sign-ins; its windows
-  show a "Separate process" chip, and "Move to main process" goes back.
+  show a "Separate process" chip, and "Move to main process" goes back. GPU-heavy pages go there on their own
+  (Settings → System, on by default): the tab preload counts WebGL/WebGPU draw calls (`src/preload/features/
+  gpu-meter.js`), and a page keeping up 20,000 a second for 10 seconds (games, not page backgrounds or video) moves at
+  once if nobody has clicked or typed in it yet, else gets a toolbar button. Its site is remembered and opens there
+  from then on (also after a manual move); moving it back forgets it.
 * **Picture in picture** (`src/main/pip.js`): toolbar button when the page has a video, Ctrl+Shift+P, right-click a
   video (also inside iframes); optional automatic picture in picture when you switch away from a playing video.
 * **Image and video saver** (`src/main/media/`): toolbar badge counting the page's images and videos; a popup with
