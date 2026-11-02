@@ -41,6 +41,7 @@ async function render() {
   engines = d.engines;
   applyTheme(prefs.theme);
   const db = await call('default-browser.status').catch(() => ({ supported: false }));
+  const ct = await call('themes.state').catch(() => null);
   const sources = await call('import.sources').then((r) => (r && r.ok ? r.value : [])).catch(() => []);
   clear(main);
 
@@ -85,7 +86,14 @@ async function render() {
     ...section(
       'appearance',
       'Appearance',
-      setting('Theme', null, select([['system', 'Match system'], ['light', 'Light'], ['dark', 'Dark']], prefs.theme, (v) => set({ theme: v }))),
+      setting('Theme', ct && ct.theme ? 'The Chrome theme below sets the colours; this applies to private-window popups and pages.' : null, select([['system', 'Match system'], ['light', 'Light'], ['dark', 'Dark']], prefs.theme, (v) => set({ theme: v }))),
+      ct
+        ? setting(
+            ct.theme ? `Chrome theme: ${ct.theme.name}` : 'Chrome themes',
+            ct.theme ? `Installed ${new Date(ct.theme.installedAt).toLocaleDateString()}${ct.theme.source === 'webstore' ? ' from the Chrome Web Store' : ''}. New windows and tabs use it; private windows keep their own look.` : 'Any theme from the Chrome Web Store works here: open one and press “Add to Chrome”. A .crx file or an unpacked theme folder works too (Extensions).',
+            h('div', { style: { display: 'flex', gap: '8px' } }, h('button', { class: 'btn', onclick: () => call('themes.store') }, 'Get themes'), ct.theme ? h('button', { class: 'btn', onclick: async () => { await call('themes.reset'); render(); } }, 'Reset to default') : null),
+          )
+        : null,
       setting('Show bookmarks bar', null, toggle(prefs.showBookmarksBar, (v) => set({ showBookmarksBar: v }))),
       setting('Show home button', null, toggle(prefs.showHomeButton, (v) => set({ showHomeButton: v }))),
     ),
@@ -165,4 +173,7 @@ async function render() {
 }
 
 render();
+window.lwPage.on('page-event', (ev) => {
+  if (ev && ev.type === 'theme') render();
+});
 window.addEventListener('hashchange', () => document.getElementById(location.hash.slice(1))?.scrollIntoView());

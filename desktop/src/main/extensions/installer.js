@@ -132,7 +132,7 @@ export function checkManifest(m) {
   if (m.manifest_version !== 2 && m.manifest_version !== 3) throw new InstallError('bad_manifest', `Unsupported manifest version ${m.manifest_version}.`);
   if (typeof m.name !== 'string' || !m.name.trim()) throw new InstallError('bad_manifest', 'The extension has no name.');
   if (!validVersion(String(m.version || ''))) throw new InstallError('bad_manifest', 'The extension has an invalid version.');
-  if (m.theme && !m.background && !m.content_scripts) throw new InstallError('theme', 'Themes are not supported.');
+  // themes (a "theme" key and nothing to run) install through src/main/themes/themes.js
   if (m.app || m.platforms) throw new InstallError('app', 'Chrome apps are not supported.');
 }
 

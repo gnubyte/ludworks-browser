@@ -68,6 +68,11 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   permissions, commands, storage.sync and webNavigation; APIs Electron lacks (declarativeNetRequest, blocking
   webRequest, identity, native messaging, side panel, userScripts…) are left undefined and listed per extension.
   Extensions cannot script or open ludworks:// pages and are not loaded in private windows.
+* **Chrome themes** (`src/main/themes/`): any Chrome Web Store theme ("Add to Chrome" on its page), .crx/.zip or
+  unpacked theme folder — its colours, tints (frame, buttons) and images (frame, toolbar, new tab page background and
+  attribution, with the page's alignment and repeat) recolour the tab strip, toolbar, bookmarks bar, window frame and
+  new tab page over a light or dark base picked from the toolbar colour. One at a time, no prompt (as in Chrome);
+  private windows keep their own look; Settings → Appearance shows it and resets to the default.
 * **Separate processes** (`src/main/separate.js`): "Move to separate process" in the tab menu opens the page in
   another browser instance with its own GPU process, so heavy pages (a WebGL game and a live stream) stop slowing each
   other down. Chromium draws all of a browser's windows through one GPU process, Chrome and Edge included. Each moved

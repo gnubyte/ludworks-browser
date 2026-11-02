@@ -18,3 +18,10 @@ body.private .q { background: #2a2350; border-color: #4a4180; color: #efeaff; }
 .apps { display: flex; flex-wrap: wrap; gap: 8px; }
 .apps a { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 18px; background: var(--surface-2); color: var(--text); font-size: 13px; text-decoration: none; }
 .apps a:hover { background: var(--accent-soft); color: var(--accent); }
+
+/* A Chrome theme (newtab.js chromeTheme) */
+body.themed { background: var(--ntp-img, none) var(--ntp-pos, center) / auto var(--ntp-repeat, no-repeat) fixed, var(--ntp-bg); color: var(--ntp-text); }
+body.themed::after { content: ""; position: fixed; right: 16px; bottom: 16px; width: 280px; height: 120px; pointer-events: none; background: var(--ntp-attr, none) right bottom / contain no-repeat; }
+body.themed .site .name { color: var(--ntp-text); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
+body.themed .site:hover { background: color-mix(in srgb, var(--ntp-bg) 70%, transparent); }
+body.themed .apps a, body.themed .ludworks h2 { color: var(--ntp-link); }

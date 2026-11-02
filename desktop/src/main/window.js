@@ -45,8 +45,7 @@ export class WindowCtl extends EventEmitter {
     this.popup = null; // {kind, anchor}
     this.pendingPrompts = new Map(); // id → resolve
     this.destroyed = false;
-    const dark = this.isDark();
-    const t = THEME[dark ? 'dark' : 'light'];
+    const t = this.frameColors();
     const b = bounds || defaultBounds();
     this.win = new BrowserWindow({
       ...b,
@@ -54,7 +53,7 @@ export class WindowCtl extends EventEmitter {
       minHeight: 360,
       show: false,
       title: isPrivate ? 'Private — Ludworks Browser' : 'Ludworks Browser',
-      backgroundColor: isPrivate ? THEME.private.frame : t.frame,
+      backgroundColor: t.frame,
       icon: browser.paths.windowIcon || undefined,
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
       ...(process.platform === 'darwin'
@@ -111,8 +110,16 @@ export class WindowCtl extends EventEmitter {
     return pref === 'dark' || (pref === 'system' && nativeTheme.shouldUseDarkColors);
   }
 
+  /** The window frame's colour and its caption buttons' (a Chrome theme's, src/main/themes). */
+  frameColors() {
+    if (this.private) return THEME.private;
+    const ct = this.browser.themes && this.browser.themes.forWindow(this);
+    if (ct) return { frame: ct.frameColor, text: ct.frameTextColor };
+    return THEME[this.isDark() ? 'dark' : 'light'];
+  }
+
   applyTheme() {
-    const t = this.private ? THEME.private : THEME[this.isDark() ? 'dark' : 'light'];
+    const t = this.frameColors();
     this.win.setBackgroundColor(t.frame);
     if (process.platform !== 'darwin') {
       try {
@@ -127,7 +134,10 @@ export class WindowCtl extends EventEmitter {
   }
 
   themeName() {
-    return this.private ? 'private' : this.isDark() ? 'dark' : 'light';
+    if (this.private) return 'private';
+    const ct = this.browser.themes && this.browser.themes.forWindow(this);
+    if (ct) return ct.base;
+    return this.isDark() ? 'dark' : 'light';
   }
 
   // ------------------------------------------------------------------------------------ tabs
@@ -528,6 +538,7 @@ export class WindowCtl extends EventEmitter {
     return {
       private: this.private,
       theme: this.themeName(),
+      chromeTheme: this.private || !this.browser.themes ? null : this.browser.themes.shellTheme(),
       platform: process.platform,
       maximized: this.win.isMaximized(),
       fullscreen: this.win.isFullScreen(),

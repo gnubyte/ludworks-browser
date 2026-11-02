@@ -66,12 +66,15 @@ export class Browser {
     this.permissions = new Permissions(this.db);
     this.downloads = new Downloads({ db: this.db, prefs: this.prefs });
     this.defaultBrowser = new DefaultBrowser();
+    const { Themes } = await import('./themes/themes.js');
+    this.themes = new Themes(this); // before any window: windows take their colours from it
     if (!this.prefs.get('hardwareAcceleration')) app.disableHardwareAcceleration();
     this.session = session.defaultSession;
     this.ua = chromeUserAgent();
     app.userAgentFallback = this.ua;
     this.setupSession(this.session, { isPrivate: false });
-    registerProtocols(session.fromPartition('lwui'), this.appDir, { shell: true, pages: false });
+    const themeFile = (rel) => this.themes.file(rel);
+    registerProtocols(session.fromPartition('lwui'), this.appDir, { shell: true, pages: false, themeFile });
 
     const { Account } = await import('./account/account.js');
     const { Autofill } = await import('./autofill.js');
@@ -108,6 +111,7 @@ export class Browser {
     const { SendToAi } = await import('./agent/send.js');
     this.sendToAi = new SendToAi(this);
     this.registerFeature(this.sendToAi);
+    this.registerFeature(this.themes);
     this.registerIpc();
 
     this.bookmarks.on('change', () => this.onBookmarksChange());
@@ -159,7 +163,7 @@ export class Browser {
   /** @param {Electron.Session} ses */
   setupSession(ses, { isPrivate }) {
     ses.setUserAgent(this.ua);
-    registerProtocols(ses, this.appDir, { shell: false, pages: true });
+    registerProtocols(ses, this.appDir, { shell: false, pages: true, themeFile: (rel) => this.themes.file(rel) });
     // The content preload runs in every frame of every page of this session: tabs, and the tabs and popups
     // pages open with window.open / target=_blank (Electron ignores a webPreferences preload for those).
     const preload = { type: 'frame', id: 'ludworks-content', filePath: this.paths.contentPreload };

@@ -5,6 +5,7 @@
 //   ludworks://<page>/             src/pages/<page>.html (and its scripts/styles by relative path)
 //   <either>://<host>/assets/…     src/assets/… (same-origin, so a strict img-src 'self' still works)
 //   <either>://<host>/lib/…        shared vault libraries (ES modules)
+//   lwshell://ui/_theme/…, ludworks://newtab/_theme/…   the current Chrome theme's images (themes/themes.js)
 
 import { net } from 'electron';
 import path from 'node:path';
@@ -18,6 +19,11 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
   '.ico': 'image/x-icon',
   '.json': 'application/json',
   '.woff2': 'font/woff2',
@@ -69,9 +75,13 @@ function shared(appDir, rel, csp) {
 /**
  * @param {Electron.Session} ses
  * @param {string} appDir
- * @param {{shell: boolean, pages: boolean}} which
+ * @param {{shell: boolean, pages: boolean, themeFile?: (rel: string) => string|null}} which
  */
-export function registerProtocols(ses, appDir, { shell, pages }) {
+export function registerProtocols(ses, appDir, { shell, pages, themeFile = () => null }) {
+  const theme = (rel, csp) => {
+    const f = themeFile(rel.slice('_theme/'.length));
+    return f ? respond(f, csp) : notFound();
+  };
   const shellRoot = path.join(appDir, 'shell');
   const pagesRoot = path.join(appDir, 'pages');
   if (shell && !ses.protocol.isProtocolHandled('lwshell')) {
@@ -79,6 +89,7 @@ export function registerProtocols(ses, appDir, { shell, pages }) {
       const u = new URL(req.url);
       if (u.host !== 'ui') return notFound();
       const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '');
+      if (rel.startsWith('_theme/')) return theme(rel, CSP_SHELL);
       const s = shared(appDir, rel, CSP_SHELL);
       if (s) return s;
       const f = safeJoin(shellRoot, rel);
@@ -90,6 +101,7 @@ export function registerProtocols(ses, appDir, { shell, pages }) {
       const u = new URL(req.url);
       if (!INTERNAL_PAGES.includes(u.host)) return notFound();
       let rel = decodeURIComponent(u.pathname).replace(/^\/+/, '');
+      if (rel.startsWith('_theme/')) return u.host === 'newtab' ? theme(rel, CSP_PAGE) : notFound();
       const s = shared(appDir, rel, CSP_PAGE);
       if (s) return s;
       if (!rel) rel = `${u.host}.html`;

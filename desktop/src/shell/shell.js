@@ -753,9 +753,37 @@ function renderSeparate() {
   $('tabstrip').insertBefore(el, $('wincontrols'));
 }
 
+// A Chrome theme (src/main/themes): its colours as CSS variables over the light or dark base, its images as
+// url() variables the stylesheet tiles (shell.css [data-chrome-theme]).
+let themeKey = '';
+let themeProps = [];
+const THEME_IMAGES = { frame: '--theme-frame-img', frameInactive: '--theme-frame-inactive-img', frameOverlay: '--theme-frame-overlay-img', toolbar: '--theme-toolbar-img', tabBackground: '--theme-tab-img' };
+function renderChromeTheme() {
+  const t = state.chromeTheme;
+  const key = t ? String(t.rev) : '';
+  if (key === themeKey) return;
+  themeKey = key;
+  for (const p of themeProps) root.style.removeProperty(p);
+  themeProps = [];
+  if (!t) {
+    delete root.dataset.chromeTheme;
+    return;
+  }
+  const set = (k, v) => {
+    root.style.setProperty(k, v);
+    themeProps.push(k);
+  };
+  for (const [k, v] of Object.entries(t.vars || {})) if (/^--[a-z-]+$/.test(k)) set(k, v);
+  for (const [k, prop] of Object.entries(THEME_IMAGES)) if (t.images && t.images[k]) set(prop, `url("${t.images[k].replace(/["\\]/g, '')}")`);
+  root.dataset.chromeTheme = t.name || 'theme';
+}
+window.addEventListener('focus', () => (root.dataset.inactive = 'false'));
+window.addEventListener('blur', () => (root.dataset.inactive = 'true'));
+
 function render(s) {
   state = s;
   root.dataset.theme = s.theme;
+  renderChromeTheme();
   root.dataset.fullscreen = String(!!s.fullscreen);
   root.dataset.htmlfs = String(!!s.htmlFullscreen);
   renderAgent();

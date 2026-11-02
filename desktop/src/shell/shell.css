@@ -207,3 +207,26 @@ html, body { background: var(--frame); overflow: hidden; user-select: none; }
 #control-bar .agent-btn:hover { background: rgba(255, 255, 255, 0.18); }
 @keyframes cb-ping { 70% { box-shadow: 0 0 0 7px rgba(255, 255, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); } }
 @media (prefers-reduced-motion: reduce) { :root, :root body, #control-bar .cb-dot { animation: none !important; } }
+
+/* A Chrome theme (shell.js renderChromeTheme): its colours replace the base ones; theme_frame tiles from the
+   window's top left behind the tab strip, theme_toolbar behind the toolbar, the active tab and the bookmarks bar
+   (fixed to the window, so the three line up as in Chrome). */
+:root[data-chrome-theme], :root[data-chrome-theme] body {
+  background-color: var(--frame); background-image: var(--theme-frame-overlay-img, none), var(--theme-frame-img, none);
+  background-repeat: no-repeat, repeat-x; background-position: left top, left top;
+}
+:root[data-chrome-theme][data-inactive="true"], :root[data-chrome-theme][data-inactive="true"] body {
+  background-color: var(--frame-inactive); background-image: var(--theme-frame-inactive-img, var(--theme-frame-img, none));
+  background-repeat: repeat-x; background-position: left top;
+}
+:root[data-chrome-theme] #toolbar, :root[data-chrome-theme] #bookmarks-bar, :root[data-chrome-theme] .tab.active, :root[data-chrome-theme] #findbar {
+  background-color: var(--toolbar); background-image: var(--theme-toolbar-img, none); background-attachment: fixed; background-position: left top;
+}
+:root[data-chrome-theme] .tab { color: var(--frame-text); }
+:root[data-chrome-theme] .tab.active { color: var(--tab-text); }
+:root[data-chrome-theme] .tab .close { color: inherit; }
+:root[data-chrome-theme] #newtab, :root[data-chrome-theme] #separate-chip { color: var(--frame-text); }
+:root[data-chrome-theme] #toolbar .icon-btn:not(.on):not([class*="tone-"]) { color: var(--icon); }
+:root[data-chrome-theme] #url { color: var(--omni-text); }
+:root[data-chrome-theme] #bookmarks-bar .bm, :root[data-chrome-theme] #bookmarks-bar .empty { color: var(--bookmark-text); }
+:root[data-chrome-theme] .tab:hover:not(.active) { background: color-mix(in srgb, var(--frame-text) 12%, transparent); }
