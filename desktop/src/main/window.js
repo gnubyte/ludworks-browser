@@ -11,11 +11,15 @@ import { log } from './util/log.js';
 const SHELL_URL = 'lwshell://ui/shell.html';
 const OVERLAY_URL = 'lwshell://ui/overlay.html';
 const PANEL_URL = 'lwshell://ui/panel.html';
+const FX_URL = 'lwshell://ui/fx.html';
+const FLY_MS = 950; // src/shell/fx.js FLY_MS
 const TITLEBAR_HEIGHT = 40;
 // Transparent margin around popup cards in the overlay view (src/shell/overlay.css #root padding).
 const OVERLAY_PAD = { x: 18, top: 4, bottom: 30 };
 // An AI agent's window: the page sits inside a coloured frame the shell draws (src/shell/shell.css .agent).
 const AGENT_FRAME = 3;
+// A page of the user's that an AI agent controls (agent.js controlOf): a wider glowing frame around it.
+const CONTROL_FRAME = 6;
 
 export class WindowCtl extends EventEmitter {
   /**
@@ -276,7 +280,7 @@ export class WindowCtl extends EventEmitter {
     const [width, height] = this.win.getContentSize();
     const full = this.win.isFullScreen() && this.htmlFullscreenTab;
     const top = full ? 0 : this.topInset;
-    const f = this.agent && !full ? AGENT_FRAME : 0;
+    const f = full ? 0 : this.agent ? AGENT_FRAME : this.controlFramed ? CONTROL_FRAME : 0;
     return { x: f, y: top, width: Math.max(0, width - 2 * f), height: Math.max(0, height - top - f) };
   }
 
@@ -346,6 +350,38 @@ export class WindowCtl extends EventEmitter {
     panel.setVisible(true);
     this.panelData = { tabId: tab.id, error: err, theme: this.themeName(), engine: this.browser.engine().name };
     if (!panel.webContents.isLoading()) panel.webContents.send('panel', this.panelData);
+  }
+
+  // ---------------------------------------------------------------------------------- effects
+  /**
+   * A new download flies from the middle of the page into the downloads button at `to` (shell coordinates):
+   * a transparent view over the whole window (src/shell/fx.html), there only while the effect plays.
+   */
+  async flyDownload(to, name) {
+    if (this.destroyed || this.win.isMinimized() || !this.win.isVisible() || this.agent) return;
+    if (!this.fx) {
+      this.fx = new WebContentsView({
+        webPreferences: { preload: this.browser.paths.shellPreload, sandbox: true, contextIsolation: true, partition: 'lwui', spellcheck: false, transparent: true, devTools: this.browser.dev },
+      });
+      this.fx.setBackgroundColor('#00000000');
+      this.fx.setVisible(false);
+      this.fx.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      this.fx.webContents.on('will-navigate', (e) => e.preventDefault());
+      this.fxReady = new Promise((resolve) => this.fx.webContents.once('did-finish-load', resolve));
+      this.fx.webContents.loadURL(FX_URL);
+    }
+    await this.fxReady;
+    if (this.destroyed || this.fx.webContents.isDestroyed()) return;
+    const [width, height] = this.win.getContentSize();
+    const page = this.contentRect();
+    this.fx.setBounds({ x: 0, y: 0, width, height });
+    this.win.contentView.addChildView(this.fx); // topmost
+    this.fx.setVisible(true);
+    this.fx.webContents.send('fly', { from: { x: page.x + page.width / 2, y: page.y + Math.min(page.height / 2, 320) }, to, name: String(name || '').slice(0, 200), theme: this.themeName() });
+    clearTimeout(this.fxTimer);
+    this.fxTimer = setTimeout(() => {
+      if (!this.destroyed && this.fx && !this.fx.webContents.isDestroyed()) this.fx.setVisible(false);
+    }, FLY_MS + 60);
   }
 
   // ----------------------------------------------------------------------------------- popups
@@ -479,7 +515,12 @@ export class WindowCtl extends EventEmitter {
       const t = this.activeTab();
       const title = `${this.agent ? `${this.agent.client} · ` : ''}${(t && t.title) || 'New Tab'} - Ludworks Browser${this.private ? ' (Private)' : ''}${this.browser.processNumber > 1 ? ` (Process ${this.browser.processNumber})` : ''}`;
       if (this.win.getTitle() !== title) this.win.setTitle(title);
-      this.shell.send('state', this.state());
+      const st = this.state();
+      if (!!st.control !== !!this.controlFramed) {
+        this.controlFramed = !!st.control;
+        this.layout();
+      }
+      this.shell.send('state', st);
     }, 16);
   }
 
@@ -492,6 +533,7 @@ export class WindowCtl extends EventEmitter {
       fullscreen: this.win.isFullScreen(),
       htmlFullscreen: !!this.htmlFullscreenTab,
       agent: this.agent,
+      control: this.browser.agent && !this.agent ? this.browser.agent.controlOf(this.activeTab()) : null,
       activeId: this.activeId,
       tabs: this.tabs.map((t) => t.snapshot()),
       keyState: this.browser.autofill ? this.browser.autofill.keyStateFor(this.activeTab()) : null,
@@ -508,7 +550,8 @@ export class WindowCtl extends EventEmitter {
     this.tabs = [];
     for (const r of this.pendingPrompts.values()) r(null);
     this.pendingPrompts.clear();
-    for (const v of [this.overlay, this.panel]) {
+    clearTimeout(this.fxTimer);
+    for (const v of [this.overlay, this.panel, this.fx]) {
       try {
         if (v && !v.webContents.isDestroyed()) v.webContents.close();
       } catch (e) {

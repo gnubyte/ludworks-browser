@@ -40,4 +40,4 @@ document.getElementById('search').addEventListener('submit', (e) => {
 });
 
 load();
-setTimeout(() => q.focus(), 0);
+// The keyboard starts in the address bar (Browser.newTabWithOmnibox); this search box takes it on a click.

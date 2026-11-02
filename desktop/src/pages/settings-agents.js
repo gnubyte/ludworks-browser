@@ -80,3 +80,45 @@ export function agentsSection(call) {
   if (!document.querySelector('link[data-agents]')) document.head.append(h('link', { rel: 'stylesheet', href: 'settings-agents.css', 'data-agents': '1' }));
   return [head, main, h('h2', { id: 'agents-connect' }, 'Connect agents'), connect, h('h2', { id: 'agents-allowed' }, 'Allowed agents'), allowed];
 }
+
+/**
+ * Settings → Send pages to AI apps: which apps the "Send to AI" toolbar badge offers (src/main/agent/send.js),
+ * and how to reach OpenClaw's gateway.
+ * @param {(cmd: string, args?: any) => Promise<any>} call
+ */
+export function sendSection(call) {
+  const card = h('div', { class: 'card' }, h('div', { class: 'setting muted' }, 'Loading…'));
+  const setting = (title, desc, control) => h('div', { class: 'setting' }, h('div', { class: 'grow' }, h('div', {}, title), desc ? h('div', { class: 'd' }, desc) : null), control);
+  const set = async (patch) => {
+    await call('send.set', patch);
+    refresh();
+  };
+  const render = (st) => {
+    clear(card);
+    card.append(
+      h('div', { class: 'setting muted' }, 'The toolbar badge sends the page you are on — its address, or a snapshot with its HTML, CSS, JavaScript and a screenshot — to an AI app on this computer with what you want done. You can also let the app control the page: the window then glows and says which app is in control, until you stop it.'),
+      setting('Vision', st.vision.found ? 'Opens the page in Vision, with your prompt on the clipboard.' : 'Vision is not installed on this computer yet.', toggle(st.sendTo.vision, (v) => set({ sendTo: { vision: v } }), 'Send pages to Vision')),
+      setting('Claude', 'The Claude app: a new chat, or a Claude Code session in the page’s snapshot folder, with your prompt filled in for you to send.', toggle(st.sendTo.claude, (v) => set({ sendTo: { claude: v } }), 'Send pages to Claude')),
+      setting('OpenClaw', `Starts an agent turn through the gateway’s hooks (${st.openclaw.hookUrl}). ${st.openclaw.hasToken ? (st.openclaw.fromConfig ? 'The hook token comes from ~/.openclaw/openclaw.json.' : 'Uses the hook token you entered.') : 'Needs hooks.enabled and hooks.token in ~/.openclaw/openclaw.json, or the token below.'}`, toggle(st.sendTo.openclaw, (v) => set({ sendTo: { openclaw: v } }), 'Send pages to OpenClaw')),
+    );
+    if (st.sendTo.openclaw) {
+      const url = h('input', { class: 'input', style: { width: '240px' }, placeholder: 'http://127.0.0.1:18789', value: st.openclaw.url, 'aria-label': 'OpenClaw gateway address' });
+      url.addEventListener('change', () => set({ openclawUrl: url.value }).catch((e) => window.alert(e.message)));
+      const token = h('input', { class: 'input', type: 'password', style: { width: '240px' }, placeholder: st.openclaw.fromConfig ? 'From openclaw.json' : 'Hook token', autocomplete: 'off', 'aria-label': 'OpenClaw hook token' });
+      token.addEventListener('change', () => set({ openclawToken: token.value }));
+      const out = h('div', { class: 'stack ag-out' });
+      card.append(
+        setting('OpenClaw gateway', 'Leave empty for the one in openclaw.json (127.0.0.1:18789 by default).', url),
+        setting('OpenClaw hook token', 'Kept in this browser profile only. Leave empty to read it from openclaw.json.', token),
+        h('div', { class: 'setting' }, h('div', { class: 'grow' }, h('div', {}, 'Test the connection'), h('div', { class: 'd' }, 'Sends OpenClaw a short test message.'), out), h('button', { class: 'btn', onclick: async () => { clear(out); const r = await call('send.test-openclaw'); out.append(h('div', { class: r.ok ? '' : 'muted' }, r.ok ? '✓ OpenClaw accepted the message.' : r.error)); } }, 'Test')),
+      );
+    }
+    card.append(setting('Snapshot folder', `Snapshots are saved in ${st.folder} for the app to read, and deleted after a week.`, h('button', { class: 'btn', onclick: () => call('send.open-folder') }, 'Open folder')));
+  };
+  const refresh = () => call('send.state').then(render, (e) => {
+    clear(card);
+    card.append(h('div', { class: 'setting muted' }, `Unavailable: ${e.message}`));
+  });
+  refresh();
+  return [h('h2', { id: 'send-to-ai' }, 'Send pages to AI apps'), card];
+}

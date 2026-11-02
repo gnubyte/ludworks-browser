@@ -2,7 +2,7 @@
 import { h, clear, applyTheme, sideNav, toggle } from './ui.js';
 import { blockerSection } from './settings-blocker.js';
 import { extensionsSection } from './settings-extensions.js';
-import { agentsSection } from './settings-agents.js';
+import { agentsSection, sendSection } from './settings-agents.js';
 
 const app = document.getElementById('app');
 const main = h('main', { class: 'main' });
@@ -134,6 +134,7 @@ async function render() {
     ...blockerSection(call),
     ...extensionsSection(call),
     ...agentsSection(call),
+    ...sendSection(call),
     h('h2', { id: 'sites' }, 'Site permissions'),
     h('div', { class: 'card' }, permList),
     ...section(

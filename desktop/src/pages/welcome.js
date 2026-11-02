@@ -36,10 +36,22 @@ function importStep(n, sources) {
   return step(n, 'Bring over your bookmarks and history', desc, h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' } }, sources.length > 1 ? pick : null, btn));
 }
 
+// The AI apps the "Send to AI" toolbar badge offers (src/main/agent/send.js); also in Settings → AI agents.
+function aiStep(n, st) {
+  const box = (key, label) => {
+    const c = h('input', { type: 'checkbox', checked: !!st.sendTo[key] });
+    c.addEventListener('change', () => call('send.set', { sendTo: { [key]: c.checked } }));
+    return h('label', { style: { display: 'inline-flex', gap: '6px', alignItems: 'center', whiteSpace: 'nowrap' } }, c, label);
+  };
+  const desc = h('div', {}, 'A toolbar badge sends the page you are on — or a snapshot of it — to your AI app with what you want done, and can let it control the page.', h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px' } }, box('vision', st.vision.found ? 'Vision' : 'Vision (not installed yet)'), box('claude', 'Claude'), box('openclaw', 'OpenClaw')));
+  return step(n, 'Send pages to AI apps', desc);
+}
+
 async function render() {
   applyTheme(await call('theme'));
   const db = await call('default-browser.status').catch(() => ({ supported: false }));
   const sources = await call('import.sources').then((r) => (r && r.ok ? r.value : [])).catch(() => []);
+  const ai = await call('send.state').catch(() => null);
   const acct = await call('account.summary').then((r) => (r && r.ok ? r.value : null)).catch(() => null);
   clear(app);
   app.append(
@@ -48,6 +60,7 @@ async function render() {
     sources.length ? importStep(2, sources) : null,
     step(sources.length ? 3 : 2, 'Sign in to Ludworks', acct && acct.phase !== 'logged_out' ? `Signed in as ${acct.user.username} on ${acct.serverHost}.` : 'Sync passwords, passkeys, bookmarks, history and open tabs — end-to-end encrypted.', acct && acct.phase !== 'logged_out' ? h('span', { class: 'pill' }, 'Done') : h('button', { class: 'btn primary', onclick: () => call('account.signin-popup') }, 'Sign in')),
     step(sources.length ? 4 : 3, 'Import from Bitwarden', 'Bring your Bitwarden vault — passwords, passkeys, TOTP, cards and notes — into Ludworks.', h('a', { class: 'btn', href: 'ludworks://passwords/' }, 'Open Passwords')),
+    ai ? aiStep(sources.length ? 5 : 4, ai) : null,
     h('div', { style: { textAlign: 'right', marginTop: '20px' } }, h('a', { class: 'btn', href: 'ludworks://newtab/' }, 'Start browsing')),
   );
 }

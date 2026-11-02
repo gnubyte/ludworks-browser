@@ -91,6 +91,17 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   listed as not saveable.
 * **AI agents** (`src/main/agent/`, `tools/lwb/`): coding agents — Claude Code and any MCP client, Vision through its
   plugins, scripts — use the browser (below).
+* **Send to AI** (`src/main/agent/send.js`, `handoff.js`): a toolbar badge sends the page — its address, or a snapshot
+  (HTML with its CSS/JS/images via "Save page complete", a screenshot, the visible text) — with what you want done to
+  Vision, OpenClaw (its gateway's `/hooks/agent`, token from `~/.openclaw/openclaw.json` or Settings), the Claude app
+  (`claude://claude.ai/new?q=`) or Claude Code (`claude://code/new?q=&folder=`). Snapshots go to
+  `<temp>/Ludworks Browser handoffs` for a week. "Let it control this page" shares the tab with that app's agent
+  (`AgentHub.grantControl`), right away or when it connects; the window then glows around the page and a bar says who
+  is in control, with Stop. Which apps show is chosen at first run or in Settings → AI agents.
+* **Tabs and downloads**: a dragged tab lifts and glows under the cursor while the others slide aside (a tab from
+  another window opens a glowing slot); a new tab puts the keyboard in the address bar; a new download flies from the
+  page into the downloads button (`src/shell/fx.html`, a transparent view shown only while it plays), which counts
+  downloads in progress and bounces twice when one finishes.
 * Main-process warnings and errors are kept in `<profile>/logs/main.log` (1 MB, rotated) — attach it to bug reports.
 
 ## AI agents (Claude Code, Vision, any MCP client)

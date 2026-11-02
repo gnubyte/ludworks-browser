@@ -6,6 +6,7 @@ import { POPUPS as PRIVACY_POPUPS } from './overlay-privacy.js';
 import { POPUPS as MEDIA_POPUPS } from './overlay-media.js';
 import { POPUPS as EXTENSIONS_POPUPS } from './overlay-extensions.js';
 import { POPUPS as AGENT_POPUPS } from './overlay-agents.js';
+import { POPUPS as SEND_POPUPS } from './overlay-send.js';
 
 const rootEl = document.getElementById('root');
 const html = document.documentElement;
@@ -479,6 +480,7 @@ const POPUPS = {
   ...MEDIA_POPUPS,
   ...EXTENSIONS_POPUPS,
   ...AGENT_POPUPS,
+  ...SEND_POPUPS,
 };
 
 // ------------------------------------------------------------------------------------- wiring

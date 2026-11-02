@@ -105,6 +105,9 @@ export class Browser {
     const { AgentHub } = await import('./agent/agent.js');
     this.agent = new AgentHub(this);
     this.registerFeature(this.agent);
+    const { SendToAi } = await import('./agent/send.js');
+    this.sendToAi = new SendToAi(this);
+    this.registerFeature(this.sendToAi);
     this.registerIpc();
 
     this.bookmarks.on('change', () => this.onBookmarksChange());
@@ -115,11 +118,11 @@ export class Browser {
     this.startEngineComponents();
     // cached filters in place and extensions loaded (content scripts) before restored tabs load
     await Promise.all([this.blocker.whenReady(1500), this.extensions.whenReady(2500)]);
+    // cookies a move sent ahead (separate.js) are in place before any page loads — also on a cold start
+    await importHandoff(this.session, this.profileDir, argv, { read: readSecret });
     const restored = this.prefs.get('startup') === 'restore' ? this.restoreSession() : 0;
     const urls = [...this.urlsFromArgv(argv), ...earlyUrls];
     this.separate.onCommandLine(argv, urls);
-    // cookies a move sent ahead (separate.js) are in place before any page loads — also on a cold start
-    await importHandoff(this.session, this.profileDir, argv, { read: readSecret });
     const firstRun = !this.db.getMeta('welcomed', false);
     if (firstRun) this.db.setMeta('welcomed', true);
     if (!restored) this.newWindow({ urls: urls.length ? urls : [firstRun ? 'ludworks://welcome/' : this.newTabUrl()] });
@@ -207,7 +210,14 @@ export class Browser {
     } else if (tabs && tabs.length) {
       tabs.forEach((t, i) => ctl.newTab({ url: t.url, active: i === active, pinned: !!t.pinned }));
     } else {
-      for (const [i, u] of (urls && urls.length ? urls : [this.newTabUrl()]).entries()) ctl.newTab({ url: u, active: i === 0 });
+      const list = urls && urls.length ? urls : [this.newTabUrl()];
+      // a window that opens on the new tab page starts with the keyboard in the address bar (once its shell is up)
+      const omnibox = !agent && !inactive && list[0] === NEWTAB;
+      if (omnibox) ctl.shellFocused = ctl.omniboxOnReady = true;
+      for (const [i, u] of list.entries()) {
+        const t = ctl.newTab({ url: u, active: i === 0 });
+        if (omnibox && i === 0) this.keepOmniboxWhileLoading(t);
+      }
     }
     ctl.win.on('resize', () => this.rememberWindowState(ctl));
     ctl.win.on('move', () => this.rememberWindowState(ctl));
@@ -263,16 +273,6 @@ export class Browser {
       .catch(() => {});
   }
 
-  /** Opens `url` in the other engine process (started, or reached through its single-instance lock). */
-  openInOtherEngine(url, { process: proc = null, incoming = null } = {}) {
-    const cmd = otherEngineCommand({ execPath: process.execPath, appPath: process.defaultApp ? app.getAppPath() : null, profileDir: this.profileDir, defaultProfileDir: defaultProfileDir(), url, process: proc, incoming });
-    return launch(cmd).catch((e) => {
-      log.warn('could not start the other engine process', { message: e.message });
-      throw e;
-    });
-  }
-
-  rememberWindowState(ctl) {
   /**
    * Opens `url` in the other engine process (started, or reached through its single-instance lock): the separate
    * process `proc` from the main browser, the main one from a separate process. A fresh separate profile starts
@@ -296,6 +296,16 @@ export class Browser {
     return this.openInOtherEngine(url, { process: proc, incoming });
   }
 
+  /** Opens `url` in the other engine process (started, or reached through its single-instance lock). */
+  openInOtherEngine(url, { process: proc = null, incoming = null } = {}) {
+    const cmd = otherEngineCommand({ execPath: process.execPath, appPath: process.defaultApp ? app.getAppPath() : null, profileDir: this.profileDir, defaultProfileDir: defaultProfileDir(), url, process: proc, incoming });
+    return launch(cmd).catch((e) => {
+      log.warn('could not start the other engine process', { message: e.message });
+      throw e;
+    });
+  }
+
+  rememberWindowState(ctl) {
     if (ctl.private || ctl.agent || ctl.win.isFullScreen() || ctl.win.isMinimized()) return;
     clearTimeout(this.winStateTimer);
     this.winStateTimer = setTimeout(() => {
@@ -338,6 +348,8 @@ export class Browser {
     const isPrivate = argv.includes('--incognito') || argv.includes('--private') || argv.includes('--inprivate');
     const urls = this.urlsFromArgv(argv);
     this.separate.onCommandLine(argv, urls);
+    // a move sent cookies ahead (separate.js): they are in place before the page opens here
+    if (parseIncomingArg(argv)) await importHandoff(this.session, this.profileDir, argv, { read: readSecret });
     if (isPrivate || argv.includes('--new-window')) this.newWindow({ urls, private: isPrivate });
     else if (urls.length) this.openUrls(urls);
     else this.ensureWindow();
@@ -348,8 +360,6 @@ export class Browser {
     const a = argv.find((x) => typeof x === 'string' && x.startsWith('--agent-request='));
     if (!a || !this.agent) return false;
     this.agent.request(a.slice('--agent-request='.length).slice(0, 100)).catch((e) => log.warn('agent request failed', { message: e.message }));
-    // a move sent cookies ahead (separate.js): they are in place before the page opens here
-    if (parseIncomingArg(argv)) await importHandoff(this.session, this.profileDir, argv, { read: readSecret });
     return true;
   }
 
@@ -778,6 +788,38 @@ export class Browser {
     return ctl.newTab({ url });
   }
 
+  /** A new tab with the keyboard in the address bar, not in the new tab page (its search box). */
+  newTabWithOmnibox(ctl) {
+    ctl.shellFocused = true; // activate() leaves the keyboard alone
+    const tab = ctl.newTab({ active: true });
+    this.focusOmnibox(ctl);
+    this.keepOmniboxWhileLoading(tab);
+  }
+
+  /** The engine gives a new tab's page the keyboard as its first page loads: hand it back to the address bar. */
+  keepOmniboxWhileLoading(tab) {
+    const wc = tab.wc;
+    // not from inside the focus change itself, which would undo it
+    const refocus = () =>
+      setTimeout(() => {
+        if (!tab.destroyed && !tab.ctl.destroyed && tab.ctl.activeTab() === tab) this.focusOmnibox(tab.ctl, { select: false });
+      }, 0);
+    const done = () => {
+      clearTimeout(timer);
+      if (!wc.isDestroyed()) wc.removeListener('focus', refocus);
+    };
+    const timer = setTimeout(done, 5000);
+    wc.on('focus', refocus);
+    wc.once('did-stop-loading', () => setTimeout(done, 0));
+  }
+
+  focusOmnibox(ctl, { select = true } = {}) {
+    if (ctl.destroyed || ctl.shell.isDestroyed()) return;
+    ctl.shellFocused = true;
+    ctl.shell.focus();
+    ctl.shell.send('focus-omnibox', { select });
+  }
+
   // ------------------------------------------------------------------------------- commands
   command(cmd, { ctl, tab = null, arg } = {}) {
     if (!ctl || ctl.destroyed) return;
@@ -785,9 +827,7 @@ export class Browser {
     const nh = tab ? tab.wc.navigationHistory : null;
     switch (cmd) {
       case 'newTab':
-        ctl.newTab({ active: true });
-        ctl.shell.focus();
-        ctl.shell.send('focus-omnibox', { select: true });
+        this.newTabWithOmnibox(ctl);
         break;
       case 'closeTab':
         if (tab) ctl.closeTab(tab.id);
@@ -800,9 +840,7 @@ export class Browser {
         break;
       case 'focusOmnibox':
       case 'focusSearch':
-        ctl.shellFocused = true;
-        ctl.shell.focus();
-        ctl.shell.send('focus-omnibox', { select: true });
+        this.focusOmnibox(ctl);
         break;
       case 'reload':
         if (tab) tab.reload(false);
@@ -942,6 +980,7 @@ export class Browser {
       dev: this.dev,
       version: app.getVersion(),
       separateProcess: this.separateProcess,
+      processNumber: this.processNumber,
     };
   }
 
@@ -980,7 +1019,6 @@ export class Browser {
       .map((n) => ({ id: n.id, type: n.type, title: n.title, url: n.url, icon: n.type === 'url' ? this.bookmarks.iconFor(n.url) : null }));
   }
 
-      processNumber: this.processNumber,
   /** Title for a bookmark added without one: the page title from history, else the address. */
   historyTitle(url) {
     const r = this.db.get('SELECT title FROM history WHERE url = ?', url);
@@ -1136,8 +1174,15 @@ export class Browser {
   onDownloadsChange(ev) {
     this.broadcastShared();
     if (ev && ev.started) {
-      const ctl = this.focusedWindow();
-      if (ctl) ctl.shell.send('download-started');
+      // the window of the tab it came from (else the frontmost one) shows it flying into its downloads button
+      const from = ev.webContents && this.tabForWebContents(ev.webContents);
+      const ctl = (from && from.ctl) || this.focusedWindow();
+      if (ctl && !ctl.shell.isDestroyed()) ctl.shell.send('download-started', { name: ev.started.filename });
+    }
+    if (ev && ev.finished) {
+      this.forEachWindow((w) => {
+        if (!w.agent && !w.shell.isDestroyed()) w.shell.send('download-finished', { state: ev.finished.state, name: ev.finished.filename });
+      });
     }
     this.forEachWindow((w) => {
       if (w.popup && w.popup.kind === 'downloads' && w.overlay) w.overlay.webContents.send('popup-data', { kind: 'downloads', data: this.downloads.list(30) });
@@ -1215,6 +1260,10 @@ export class Browser {
     const byId = (id) => ctl.tabById(Number(id));
     switch (cmd) {
       case 'ready':
+        if (ctl.omniboxOnReady) {
+          ctl.omniboxOnReady = false;
+          setTimeout(() => this.focusOmnibox(ctl), 0);
+        }
         return ctl.state();
       case 'layout':
         if (sender === ctl.shell && Number.isFinite(a.top)) ctl.setTopInset(a.top);
@@ -1223,8 +1272,13 @@ export class Browser {
         ctl.shellFocused = !!a.focused;
         return null;
       case 'tab.new':
-        ctl.newTab({ active: true });
-        ctl.shell.send('focus-omnibox', { select: true });
+        this.newTabWithOmnibox(ctl);
+        return null;
+      case 'control.stop': // the bar over a page an AI app controls (shell.js renderControl)
+        if (this.agent && ctl.activeTab()) this.agent.revokeControl(ctl.activeTab());
+        return null;
+      case 'fx.download': // the shell found where its downloads button is: play the flyover there
+        if (sender === ctl.shell && a.to && Number.isFinite(a.to.x) && Number.isFinite(a.to.y)) ctl.flyDownload({ x: a.to.x, y: a.to.y }, a.name);
         return null;
       case 'tab.close':
         ctl.closeTab(Number(a.id));
