@@ -155,7 +155,7 @@ async function render() {
       setting('Use hardware acceleration', 'Takes effect after restarting the browser.', toggle(prefs.hardwareAcceleration, (v) => set({ hardwareAcceleration: v }))),
       setting(
         'Open GPU-heavy pages in a separate process',
-        'Games and other pages that keep the graphics card busy run in a process of their own, so they do not slow down your other tabs. Sites there keep their own sign-ins; "Move to main process" in the tab menu brings a site back.',
+        'Games and other pages that keep the graphics card busy run in a numbered process of their own, so they do not slow down your other tabs. Your sign-ins and site data are there too; "Move to main process" in the tab menu brings a site back.',
         toggle(prefs.autoSeparate, (v) => set({ autoSeparate: v })),
       ),
     ),

@@ -649,16 +649,19 @@ function renderAgent() {
   );
 }
 
-// A window of the separate engine process (src/main/separate.js): a chip in the tab strip says so.
+// A window of a separate engine process (src/main/separate.js): a chip in the tab strip says which process it is.
 function renderSeparate() {
   const chip = $('separate-chip');
   if (!state.separateProcess) {
     if (chip) chip.remove();
     return;
   }
-  if (chip) return;
-  const tip = 'This window runs in a separate process with its own GPU process, so heavy pages here and in your other windows do not slow each other down. Sites here keep their own sign-ins.';
-  $('tabstrip').insertBefore(h('div', { id: 'separate-chip', title: tip }, icon('layers', { size: 14 }), 'Separate process'), $('wincontrols'));
+  if (chip && chip.dataset.process === String(state.processNumber)) return;
+  if (chip) chip.remove();
+  const tip = `This window runs in process ${state.processNumber}, with its own GPU process, so heavy pages here and in your other browser processes do not slow each other down. Your sign-ins and site data are here too.`;
+  const el = h('div', { id: 'separate-chip', title: tip }, icon('layers', { size: 14 }), `Process ${state.processNumber}`);
+  el.dataset.process = state.processNumber;
+  $('tabstrip').insertBefore(el, $('wincontrols'));
 }
 
 function render(s) {

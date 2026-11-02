@@ -29,7 +29,7 @@ export const DEFAULT_PREFS = Object.freeze({
   zoom: {}, // host → zoom level
   spellcheck: true,
   hardwareAcceleration: true,
-  autoSeparate: true, // GPU-heavy pages open in the separate process (separate.js)
+  autoSeparate: true, // GPU-heavy pages open in their own numbered process (separate.js)
   agentAccess: false, // AI agents (Claude Code, Vision, MCP clients) may use the browser (agent/agent.js)
   agentScope: 'own', // 'own': the tabs they open and tabs the user shares | 'all': every normal tab
   agentScripts: true, // browser_evaluate: agents may run JavaScript in their pages

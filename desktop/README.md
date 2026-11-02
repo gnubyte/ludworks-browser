@@ -68,15 +68,21 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   permissions, commands, storage.sync and webNavigation; APIs Electron lacks (declarativeNetRequest, blocking
   webRequest, identity, native messaging, side panel, userScripts…) are left undefined and listed per extension.
   Extensions cannot script or open ludworks:// pages and are not loaded in private windows.
-* **Separate process** (`src/main/separate.js`): "Move to separate process" in the tab menu opens the page in a second
-  browser instance with its own GPU process, so two heavy pages (a WebGL game and a live stream) stop slowing each
-  other down. Chromium draws all of a browser's windows through one GPU process, Chrome and Edge included. That
-  instance runs on its own profile (`<profile>/Separate Process`), so sites there keep their own sign-ins; its windows
-  show a "Separate process" chip, and "Move to main process" goes back. GPU-heavy pages go there on their own
-  (Settings → System, on by default): the tab preload counts WebGL/WebGPU draw calls (`src/preload/features/
-  gpu-meter.js`), and a page keeping up 20,000 a second for 10 seconds (games, not page backgrounds or video) moves at
-  once if nobody has clicked or typed in it yet, else gets a toolbar button. Its site is remembered and opens there
-  from then on (also after a manual move); moving it back forgets it.
+* **Separate processes** (`src/main/separate.js`): "Move to separate process" in the tab menu opens the page in
+  another browser instance with its own GPU process, so heavy pages (a WebGL game and a live stream) stop slowing each
+  other down. Chromium draws all of a browser's windows through one GPU process, Chrome and Edge included. Each moved
+  site gets a numbered process of its own — "Process 2", "Process 3"… in the window title and a chip in the tab strip
+  (the main browser is process 1) — and opens in it from then on. A process's profile (`<profile>/Separate Process`,
+  `Separate Process 3`, …) starts as a copy of the main one, so sign-ins, site data, history and the Ludworks account
+  are already there, and every move also sends that site's current cookies ahead (in both directions, OS-encrypted,
+  imported before the page loads); a copied profile gets a browser-sync device id of its own. The way back is always
+  at hand: every separate-process window has a "Move to main process" toolbar button (also in the tab menu), and when
+  the main browser diverts a link of a remembered site, a toolbar button offers to open it there instead — both
+  forget the site, so it opens in the main browser from then on. GPU-heavy pages move on their own (Settings →
+  System, on by default): the tab
+  preload counts WebGL/WebGPU draw calls (`src/preload/features/gpu-meter.js`), and a page keeping up 20,000 a second
+  for 10 seconds (games, not page backgrounds or video) moves at once if nobody has clicked or typed in it yet, else
+  gets a toolbar button.
 * **Picture in picture** (`src/main/pip.js`): toolbar button when the page has a video, Ctrl+Shift+P, right-click a
   video (also inside iframes); optional automatic picture in picture when you switch away from a playing video.
 * **Image and video saver** (`src/main/media/`): toolbar badge counting the page's images and videos; a popup with
@@ -168,6 +174,10 @@ Run the staged app without packaging: `.cache/electron/<version>/win32-x64/elect
 Browser`, registers Default-apps capabilities, Start menu/desktop shortcuts and an uninstall entry; your profile lives in
 `%LOCALAPPDATA%\Ludworks Browser\User Data`. Re-running a newer installer upgrades in place. `--silent`,
 `--no-desktop-shortcut`, `--no-launch`, `--dir=` are supported. Uninstall from Settings → Apps.
+
+Started by a packaged (MSIX) app such as Claude, the browser would inherit that app's file virtualization and keep part
+of the profile in `%LOCALAPPDATA%\Packages\<app>\LocalCache`. Such a start hands its link to a running browser, or
+refuses to open the profile and offers a normal start through Explorer (`src/main/package-storage.js`, `main.js`).
 
 ### DRM (Netflix-class services)
 
