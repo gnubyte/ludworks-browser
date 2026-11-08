@@ -157,7 +157,8 @@ export class WindowCtl extends EventEmitter {
   /**
    * @param {{url?: string, active?: boolean, index?: number, opener?: Tab|null, webContents?: Electron.WebContents, pinned?: boolean, typed?: boolean}} o
    */
-  newTab({ url = null, active = true, index = null, opener = null, webContents = null, pinned = false, typed = false } = {}) {
+  /** `lazy`: the page loads when the tab is first shown (restored background tabs); `title` shows until then. */
+  newTab({ url = null, active = true, index = null, opener = null, webContents = null, pinned = false, typed = false, lazy = false, title = '' } = {}) {
     const target = url || (webContents ? null : this.browser.newTabUrl());
     const tab = new Tab({ ctl: this, url: null, webContents, opener, pinned });
     this.browser.onTabCreated(tab);
@@ -175,7 +176,11 @@ export class WindowCtl extends EventEmitter {
     this.tabs.splice(at, 0, tab);
     this.win.contentView.addChildView(tab.view);
     this.watchFocus(tab);
-    if (target) tab.load(target, { typed });
+    if (target && lazy && !active) {
+      tab.url = target;
+      tab.title = title;
+      tab.pendingLoad = true;
+    } else if (target) tab.load(target, { typed });
     if (active || !this.activeId) this.activate(tab.id);
     else this.layout();
     this.sendState();
@@ -192,6 +197,10 @@ export class WindowCtl extends EventEmitter {
     if (prev && prev !== tab) this.browser.onTabSwitch(this, prev, tab);
     this.activeId = id;
     tab.lastActive = Date.now();
+    if (tab.pendingLoad) {
+      tab.pendingLoad = false;
+      tab.load(tab.url);
+    }
     this.hidePopup();
     this.layout();
     // an agent switching tabs in its window must not pull that window in front of the user's work

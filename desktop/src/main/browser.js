@@ -129,10 +129,13 @@ export class Browser {
     nativeTheme.on('updated', () => this.forEachWindow((w) => w.applyTheme()));
 
     this.startEngineComponents();
-    // cached filters in place and extensions loaded (content scripts) before restored tabs load
-    await Promise.all([this.blocker.whenReady(1500), this.extensions.whenReady(2500)]);
-    // cookies a move sent ahead (separate.js) are in place before any page loads — also on a cold start
-    await importHandoff(this.session, this.profileDir, argv, { read: readSecret }, { keepExisting: !this.separateProcess });
+    // Pages wait until the cached filters are in place, extensions are loaded (content scripts) and cookies a
+    // move sent ahead (separate.js) are imported — also on a cold start; the windows do not: they show at once
+    // and their tabs start loading when this opens (Tab.load).
+    this.pagesGate = Promise.all([this.blocker.whenReady(1500), this.extensions.whenReady(2500)])
+      .then(() => importHandoff(this.session, this.profileDir, argv, { read: readSecret }, { keepExisting: !this.separateProcess }))
+      .catch((e) => log.warn('page start gate failed', { message: e && e.message }))
+      .finally(() => (this.pagesGate = null));
     const restored = this.prefs.get('startup') === 'restore' ? this.restoreSession() : 0;
     const urls = [...this.urlsFromArgv(argv), ...earlyUrls];
     this.separate.onCommandLine(argv, urls);
@@ -221,7 +224,8 @@ export class Browser {
     if (empty) {
       // the caller adds the first tab (window.open popups adopt the opener-created webContents)
     } else if (tabs && tabs.length) {
-      tabs.forEach((t, i) => ctl.newTab({ url: t.url, active: i === active, pinned: !!t.pinned }));
+      // restored tabs: only the active one loads now, the others when first shown (as in Chrome)
+      tabs.forEach((t, i) => ctl.newTab({ url: t.url, active: i === active, pinned: !!t.pinned, lazy: i !== active, title: typeof t.title === 'string' ? t.title.slice(0, 500) : '' }));
     } else {
       const list = urls && urls.length ? urls : [this.newTabUrl()];
       // a window that opens on the new tab page starts with the keyboard in the address bar (once its shell is up)
@@ -1483,7 +1487,7 @@ export class Browser {
       { label: 'New tab to the right', click: () => ctl.newTab({ index: i + 1 }) },
       { type: 'separator' },
       { label: 'Reload', click: () => tab.reload() },
-      { label: 'Duplicate', click: () => ctl.newTab({ url: tab.wc.getURL(), index: i + 1 }) },
+      { label: 'Duplicate', click: () => ctl.newTab({ url: tab.wc.getURL() || tab.url, index: i + 1 }) },
       { label: tab.pinned ? 'Unpin' : 'Pin', click: () => { tab.pinned = !tab.pinned; ctl.moveTab(tab.id, tab.pinned ? ctl.tabs.filter((t) => t.pinned && t !== tab).length : i); tab.update(); } },
       { label: tab.wc.isAudioMuted() ? 'Unmute site' : 'Mute site', click: () => { tab.wc.setAudioMuted(!tab.wc.isAudioMuted()); tab.update(); } },
       ...(move.length ? [{ type: 'separator' }, ...move] : []),
