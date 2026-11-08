@@ -19,7 +19,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { promises as fsPromises } from 'node:fs';
-import { mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { originOf } from './util/urls.js';
@@ -178,15 +178,19 @@ export async function writeHandoff(profileDir, cookies, secrets) {
   }
 }
 
+const HANDOFF_MAX_AGE = 10 * 60 * 1000; // a handoff older than this (a launch that failed) is dropped, not applied
+
 /**
- * Imports the pending cookie handoffs into `ses` — the file named by `--ludworks-incoming` in `argv`, else every
- * pending one in this profile — and removes the files, so a page that opens after this resolves sees the
- * sign-ins sent ahead (a move, separate.js). Nothing here throws; a cookie that cannot be set just stays unset.
- * `secrets` is {read} of account/files.js; `io` is injectable for the tests.
+ * Imports the pending cookie handoffs into `ses` — the file named by `--ludworks-incoming` in `argv`, else the
+ * pending ones in this profile written in the last few minutes (older ones are stale and only removed) — and
+ * removes the files, so a page that opens after this resolves sees the sign-ins sent ahead (a move, separate.js).
+ * `keepExisting` (the main browser): a cookie it already has is never replaced, so a separate process's stale
+ * or anonymous copy cannot sign the main browser out of a site. Nothing here throws; a cookie that cannot be set
+ * just stays unset. `secrets` is {read} of account/files.js; `io` is injectable for the tests.
  * @returns {Promise<number>} how many cookies were set
  */
 export async function importHandoff(ses, profileDir, argv, secrets, io = {}) {
-  const { readDir = readdirSync, rm = rmSync } = io;
+  const { readDir = readdirSync, rm = rmSync, mtime = (f) => statSync(f).mtimeMs, now = Date.now(), keepExisting = false } = io;
   let files = [];
   const named = parseIncomingArg(argv);
   if (named) files = [named];
@@ -199,12 +203,25 @@ export async function importHandoff(ses, profileDir, argv, secrets, io = {}) {
     }
   }
   let n = 0;
+  const bare = (d) => String(d || '').replace(/^\./, '');
   for (const file of files) {
+    let fresh;
     try {
-      const cookies = await secrets.read(file);
+      fresh = !!named || now - mtime(file) <= HANDOFF_MAX_AGE;
+    } catch {
+      fresh = false;
+    }
+    try {
+      const cookies = fresh ? await secrets.read(file) : null;
       if (Array.isArray(cookies)) {
-        await Promise.all(cookies.map((c) => Promise.resolve(ses.cookies.set(toElectronCookie(c))).catch(() => {})));
-        n += cookies.length;
+        for (const c of cookies) {
+          const ec = toElectronCookie(c);
+          if (keepExisting) {
+            const have = await Promise.resolve(ses.cookies.get({ url: ec.url, name: ec.name })).catch(() => []);
+            if ((have || []).some((x) => (x.path || '/') === ec.path && bare(x.domain) === bare(c.domain))) continue;
+          }
+          await Promise.resolve(ses.cookies.set(ec)).then(() => n++, () => {});
+        }
       }
     } catch {
       /* unreadable handoff: dropped below like the others */
@@ -238,8 +255,10 @@ export function copiedProfileEntry(name) {
  * `io` is injectable for the tests.
  * @returns {Promise<{copied: number, failed: number}>}
  */
+export const COPY_MARKER = '.ludworks-copy'; // in a separate profile made by copyProfile (older ones started empty)
+
 export async function copyProfile(fromDir, toDir, io = {}) {
-  const { readDir = readdirSync, copy = (s, d) => fsPromises.cp(s, d, { recursive: true, force: true }) } = io;
+  const { readDir = readdirSync, copy = (s, d) => fsPromises.cp(s, d, { recursive: true, force: true }), mark = (f) => writeFileSync(f, `${new Date().toISOString()}\n`) } = io;
   const out = { copied: 0, failed: 0 };
   let entries = [];
   try {
@@ -255,6 +274,11 @@ export async function copyProfile(fromDir, toDir, io = {}) {
     } catch {
       out.failed++;
     }
+  }
+  try {
+    mark(path.join(toDir, COPY_MARKER));
+  } catch {
+    /* a later move offers the copy again */
   }
   return out;
 }

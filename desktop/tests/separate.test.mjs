@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import {
   SEPARATE_DIR, FROM_SEPARATE, INCOMING_SWITCH, MAX_PROCESSES, separateProcessDir, separateNumberOf,
   isSeparateProfile, separateProcessNumbers, nextProcessNumber, canMove, siteOf, otherEngineCommand, launch,
-  incomingFile, parseIncomingArg, toElectronCookie, writeHandoff, importHandoff, copiedProfileEntry, copyProfile,
+  incomingFile, parseIncomingArg, toElectronCookie, writeHandoff, importHandoff, copiedProfileEntry, copyProfile, COPY_MARKER,
   rotateDeviceId, SeparateProcess,
 } from '../build/app/main/separate.js';
 import { installGpuMeter } from '../src/preload/features/gpu-meter.js';
@@ -133,6 +133,38 @@ test('handoff: imported before the page loads, then removed — the named file, 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('handoff: a stale pending file is dropped unread; the main browser never replaces a cookie it has', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'lwb-handoff-'));
+  try {
+    const old = incomingFile(dir, randomUUID());
+    mkdirSync(path.dirname(old), { recursive: true });
+    writeFileSync(old, 'encrypted');
+    const reads = [];
+    const set = [];
+    const ses = { cookies: { set: (c) => (set.push(c), Promise.resolve()), get: async ({ name }) => (name === 'sid' ? [{ name: 'sid', domain: '.a.test', path: '/' }] : []) } };
+    const secrets = { read: (f) => (reads.push(f), [{ name: 'sid', value: 'stale', domain: '.a.test', path: '/' }, { name: 'pref', value: 'x', domain: '.a.test', path: '/' }]) };
+    // written an hour ago: a launch that failed long since
+    assert.equal(await importHandoff(ses, dir, [], secrets, { now: Date.now() + 3600e3 }), 0);
+    assert.deepEqual(reads, []);
+    assert.ok(!existsSync(old));
+    // a named handoff into the main browser adds what it lacks and keeps its own session cookie
+    const named = incomingFile(dir, randomUUID());
+    writeFileSync(named, 'encrypted');
+    assert.equal(await importHandoff(ses, dir, [`${INCOMING_SWITCH}=${named}`], secrets, { keepExisting: true }), 1);
+    assert.deepEqual(set.map((c) => c.name), ['pref']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('copy: a copied profile is marked, so profiles from before copying are told apart', async () => {
+  const to = path.join(mkdtempSync(path.join(os.tmpdir(), 'lwb-copy-')), 'Separate Process');
+  const marks = [];
+  await copyProfile('/main', to, { readDir: () => ['Cookies'], copy: async () => {}, mark: (f) => marks.push(f) });
+  assert.deepEqual(marks, [path.join(to, COPY_MARKER)]);
+  rmSync(path.dirname(to), { recursive: true, force: true });
 });
 
 test('handoff: parseIncomingArg finds the switch, ignores everything else', () => {

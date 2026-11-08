@@ -1,7 +1,8 @@
 // The browser: profile services, sessions, windows, commands and IPC wiring.
 
-import { app, session, ipcMain, dialog, nativeTheme, shell, Menu, desktopCapturer, screen, webContents as allWebContents } from 'electron';
-import { existsSync } from 'node:fs';
+import { app, session, ipcMain, dialog, nativeTheme, shell, Menu, desktopCapturer, screen, powerMonitor, webContents as allWebContents } from 'electron';
+import { existsSync, renameSync } from 'node:fs';
+import { registrableDomain } from '../lib/url-match.js';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -19,12 +20,13 @@ import { currentEngine, searchUrl, fetchSuggestions, ENGINES } from './search.js
 import { chromeUserAgent } from './util/ua.js';
 import { log } from './util/log.js';
 import { APP_NAME, defaultProfileDir } from './paths.js';
-import { canMove, copyProfile, importHandoff, launch, otherEngineCommand, parseIncomingArg, rotateDeviceId, separateNumberOf, separateProcessDir, writeHandoff, SeparateProcess } from './separate.js';
+import { canMove, copyProfile, COPY_MARKER, importHandoff, launch, otherEngineCommand, parseIncomingArg, rotateDeviceId, separateNumberOf, separateProcessDir, writeHandoff, SeparateProcess } from './separate.js';
 import { readSecret, writeSecret } from './account/files.js';
 import { DefaultBrowser } from './default-browser.js';
 import { WebRequestHub } from './webrequest.js';
 import { tabWebPreferences } from './tab.js';
 import { TabDrag, cleanStrip } from './tab-drag.js';
+import { SnapPreview } from './snap-preview.js';
 
 const NEWTAB = 'ludworks://newtab/';
 const SESSION_SAVE_DELAY = 1500;
@@ -51,7 +53,7 @@ export class Browser {
     this.pinnedNext = new Map(); // host → fingerprint the Ludworks server announced as its renewal
     this.pendingPermission = new Map(); // tab id → [{...}]
     this.shortcuts = new Shortcuts(this);
-    this.tabDrag = new TabDrag(this, () => screen.getCursorScreenPoint());
+    this.tabDrag = new TabDrag(this, () => screen.getCursorScreenPoint(), { displayAt: (p) => screen.getDisplayNearestPoint(p), preview: new SnapPreview() });
     this.sessionTimer = null;
     this.features = []; // feature modules: toolbar buttons, popups, page commands, network hooks (see registerFeature)
     this.attachedSessions = []; // [{ses, isPrivate}] set up by setupSession
@@ -73,6 +75,13 @@ export class Browser {
     this.ua = chromeUserAgent();
     app.userAgentFallback = this.ua;
     this.setupSession(this.session, { isPrivate: false });
+    // Cookies reach the disk soon after they change and before the computer sleeps or shuts down, not only every
+    // 30 s and at a clean exit: a crash, a killed process or a power cut then loses no fresh sign-in.
+    this.session.cookies.on('changed', () => {
+      clearTimeout(this.cookieFlushTimer);
+      this.cookieFlushTimer = setTimeout(() => this.flushCookies(), 5000);
+    });
+    for (const ev of ['suspend', 'shutdown', 'lock-screen']) powerMonitor.on(ev, () => this.flushCookies());
     const themeFile = (rel) => this.themes.file(rel);
     registerProtocols(session.fromPartition('lwui'), this.appDir, { shell: true, pages: false, themeFile });
 
@@ -123,7 +132,7 @@ export class Browser {
     // cached filters in place and extensions loaded (content scripts) before restored tabs load
     await Promise.all([this.blocker.whenReady(1500), this.extensions.whenReady(2500)]);
     // cookies a move sent ahead (separate.js) are in place before any page loads — also on a cold start
-    await importHandoff(this.session, this.profileDir, argv, { read: readSecret });
+    await importHandoff(this.session, this.profileDir, argv, { read: readSecret }, { keepExisting: !this.separateProcess });
     const restored = this.prefs.get('startup') === 'restore' ? this.restoreSession() : 0;
     const urls = [...this.urlsFromArgv(argv), ...earlyUrls];
     this.separate.onCommandLine(argv, urls);
@@ -287,14 +296,37 @@ export class Browser {
    */
   async sendToOtherEngine(url, proc = null, ses = this.session) {
     const target = this.separateProcess ? path.dirname(this.profileDir) : separateProcessDir(this.profileDir, proc ?? 2);
+    // A separate profile from before profiles were copied started empty — no sign-ins, no account: set it aside
+    // (when its process is not running, the folder can be renamed) and copy the main one in its place.
+    if (!this.separateProcess && existsSync(target) && !existsSync(path.join(target, COPY_MARKER))) {
+      const aside = `${target} (empty, set aside ${new Date().toISOString().slice(0, 10)})`;
+      try {
+        if (!existsSync(aside)) renameSync(target, aside);
+        log.info('empty separate profile set aside', { process: proc ?? 2 });
+      } catch {
+        /* in use: it keeps running as it is */
+      }
+    }
     if (!this.separateProcess && !existsSync(target)) {
+      await this.flushCookies(); // the copy gets the latest sign-ins
       const res = await copyProfile(this.profileDir, target);
       rotateDeviceId(path.join(target, 'Profile.sqlite'));
       log.info('separate process profile created', { process: proc ?? 2, ...res });
     }
     let incoming = null;
     if (ses) {
-      const cookies = await ses.cookies.get({ url }).catch(() => []);
+      // the site's cookies on its whole registrable domain (www., accounts., …), not only those this URL gets
+      const host = (() => {
+        try {
+          return new URL(url).hostname;
+        } catch {
+          return '';
+        }
+      })();
+      const site = registrableDomain(host) || host;
+      const byKey = new Map();
+      for (const c of [...(await ses.cookies.get({ url }).catch(() => [])), ...(site ? await ses.cookies.get({ domain: site }).catch(() => []) : [])]) byKey.set(`${c.domain}|${c.path}|${c.name}`, c);
+      const cookies = [...byKey.values()];
       incoming = await writeHandoff(target, cookies, { write: writeSecret });
     }
     return this.openInOtherEngine(url, { process: proc, incoming });
@@ -353,7 +385,7 @@ export class Browser {
     const urls = this.urlsFromArgv(argv);
     this.separate.onCommandLine(argv, urls);
     // a move sent cookies ahead (separate.js): they are in place before the page opens here
-    if (parseIncomingArg(argv)) await importHandoff(this.session, this.profileDir, argv, { read: readSecret });
+    if (parseIncomingArg(argv)) await importHandoff(this.session, this.profileDir, argv, { read: readSecret }, { keepExisting: !this.separateProcess });
     if (isPrivate || argv.includes('--new-window')) this.newWindow({ urls, private: isPrivate });
     else if (urls.length) this.openUrls(urls);
     else this.ensureWindow();
@@ -478,7 +510,27 @@ export class Browser {
     return n;
   }
 
-  beforeQuit() {
+  /** Writes the cookie store to disk now (it otherwise does so every 30 s and at a clean exit). Never throws. */
+  async flushCookies() {
+    try {
+      await this.session.cookies.flushStore();
+    } catch (e) {
+      log.debug('cookie flush failed', { message: e.message });
+    }
+  }
+
+  /**
+   * The app is quitting: the first time, quitting waits (at most 2 s) for the cookie store to reach the disk, so
+   * the newest sign-ins survive even if the exit that follows is not clean; then it quits for real.
+   */
+  beforeQuit(e) {
+    if (!this.cookiesFlushedForQuit && e && typeof e.preventDefault === 'function') {
+      this.cookiesFlushedForQuit = true;
+      e.preventDefault();
+      Promise.race([this.flushCookies(), new Promise((r) => setTimeout(r, 2000))]).then(() => app.quit());
+      return;
+    }
+    if (this.quitting) return;
     this.quitting = true;
     this.saveSession();
     if (this.agent) this.agent.beforeQuit();
@@ -1548,7 +1600,7 @@ export class Browser {
       case 'account':
         return ctl.showPopup('account', this.account.summary(), { ...a, width: 340 });
       case 'key':
-        return this.autofill.openKeyBubble(ctl, a);
+        return this.autofill.openKeyBubble(ctl, a, { browse: !!(data && data.browse) });
       case 'tab-search':
         return ctl.showPopup('tab-search', { tabs: ctl.tabs.map((t) => ({ id: t.id, title: t.title, url: t.wc.getURL() })) }, { ...a, width: 380 });
       default: {

@@ -22,6 +22,7 @@ $('home').append(icon('home', { size: 17 }));
 $('star').append(icon('star', { size: 16 }));
 $('key').append(icon('key', { size: 16 }));
 $('downloads').append(icon('download', { size: 18 }));
+$('vault').append(icon('key', { size: 18 }));
 $('menu').append(icon('menu', { size: 18 }));
 $('find-prev').append(icon('up', { size: 16 }));
 $('find-next').append(icon('down', { size: 16 }));
@@ -351,6 +352,14 @@ function renderToolbar() {
   $('key').classList.toggle('locked', !!(k && k.locked));
   $('key').classList.toggle('capture', !!(k && k.capture));
   $('key').title = k && k.capture ? 'Save password?' : k && k.locked ? 'Ludworks vault is locked' : k && k.count ? `${k.count} saved login${k.count === 1 ? '' : 's'} for this site` : 'Passwords';
+  // the password manager badge, always there: this site's login count, locked / signed-out states
+  const vb = $('vault');
+  vb.hidden = !!state.agent;
+  const acctPhase = (state.account || {}).phase || 'logged_out';
+  clear(vb).append(icon('key', { size: 18 }));
+  vb.classList.toggle('locked', acctPhase !== 'unlocked');
+  if (acctPhase === 'unlocked' && k && k.count) vb.append(h('span', { class: 'vault-count' }, k.count > 99 ? '99+' : String(k.count)));
+  vb.title = acctPhase === 'logged_out' ? 'Passwords — sign in to Ludworks' : acctPhase !== 'unlocked' ? 'Passwords — vault locked' : k && k.count ? `Passwords — ${k.count} for this site · search all` : 'Passwords — search all';
   // downloads
   const d = state.downloads || {};
   const db = $('downloads');
@@ -801,7 +810,17 @@ function render(s) {
 
 // --------------------------------------------------------------------------------- omnibox
 const url = $('url');
+// A view that takes the keyboard without asking gives it straight back (WindowCtl.keepFocus): coming back
+// within moments of a blur, the address bar keeps what was typed, the caret and the suggestions.
+let omniBlur = { at: 0, edited: false };
 url.addEventListener('focus', () => {
+  if (Date.now() - omniBlur.at < 500 && omniBlur.edited) {
+    omniFocused = true;
+    omniEdited = true;
+    $('omnibox').classList.add('focused');
+    call('focus', { focused: true });
+    return;
+  }
   omniFocused = true;
   omniEdited = false;
   $('omnibox').classList.add('focused');
@@ -811,6 +830,7 @@ url.addEventListener('focus', () => {
   call('focus', { focused: true });
 });
 url.addEventListener('blur', () => {
+  omniBlur = { at: Date.now(), edited: omniEdited };
   omniFocused = false;
   $('omnibox').classList.remove('focused');
   call('focus', { focused: false });
@@ -883,6 +903,7 @@ $('home').addEventListener('click', () => call('nav', { action: 'home' }));
 $('siteinfo').addEventListener('click', () => call('popup.open', { kind: 'site-info', anchor: anchorOf($('siteinfo'), { width: 340 }) }));
 $('star').addEventListener('click', () => call('popup.open', { kind: 'star', anchor: anchorOf($('star'), { align: 'right', width: 340 }) }));
 $('key').addEventListener('click', () => call('popup.open', { kind: 'key', anchor: anchorOf($('key'), { align: 'right', width: 360 }) }));
+$('vault').addEventListener('click', () => call('popup.open', { kind: 'key', anchor: anchorOf($('vault'), { align: 'right', width: 380 }), data: { browse: true } }));
 $('downloads').addEventListener('click', () => call('popup.open', { kind: 'downloads', anchor: anchorOf($('downloads'), { align: 'right', width: 380 }) }));
 $('account').addEventListener('click', () => call('popup.open', { kind: 'account', anchor: anchorOf($('account'), { align: 'right', width: 340 }) }));
 $('menu').addEventListener('click', () => call('popup.open', { kind: 'menu', anchor: anchorOf($('menu'), { align: 'right', width: 300 }) }));

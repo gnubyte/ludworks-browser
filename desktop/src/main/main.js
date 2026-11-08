@@ -97,7 +97,7 @@ async function boot() {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
-  app.on('before-quit', () => browser.beforeQuit());
+  app.on('before-quit', (e) => browser.beforeQuit(e));
   // Unpackaged runs (electron.exe <app dir> ...) carry the app directory as the first argument.
   await browser.start(process.argv.slice(process.defaultApp ? 2 : 1), pendingUrls.splice(0));
 }
@@ -110,7 +110,9 @@ async function boot() {
  * the user's own context. Returns true when this process must not start the browser.
  */
 function refuseForeignPackage() {
-  if (explicitProfile || process.platform !== 'win32' || process.defaultApp) return false;
+  // a --profile naming the default profile or one of its separate-process profiles is checked like no --profile
+  const ownProfile = samePath(profileDir, defaultProfileDir()) || isSeparateProfile(profileDir);
+  if ((explicitProfile && !ownProfile) || process.platform !== 'win32' || process.defaultApp) return false;
   const pkg = packageRedirectingWrites(profileDir);
   if (!pkg) return false;
   log.info('started inside another app package', { package: pkg });

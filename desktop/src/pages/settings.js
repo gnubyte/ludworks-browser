@@ -51,7 +51,7 @@ async function render() {
   homepage.addEventListener('change', () => set({ homepage: homepage.value.trim() || 'ludworks://newtab/' }));
 
   const clearRange = select([['3600000', 'Last hour'], ['86400000', 'Last 24 hours'], ['172800000', 'Last 48 hours'], ['259200000', 'Last 72 hours'], ['604800000', 'Last 7 days'], ['0', 'All time']], '0', () => {});
-  const what = { history: h('input', { type: 'checkbox', checked: true }), cookies: h('input', { type: 'checkbox', checked: true }), cache: h('input', { type: 'checkbox', checked: true }), downloads: h('input', { type: 'checkbox' }), permissions: h('input', { type: 'checkbox' }) };
+  const what = { history: h('input', { type: 'checkbox', checked: true }), cookies: h('input', { type: 'checkbox' }), cache: h('input', { type: 'checkbox', checked: true }), downloads: h('input', { type: 'checkbox' }), permissions: h('input', { type: 'checkbox' }) };
   const label = (cb, t) => h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, cb, t);
   const clearBtn = h('button', { class: 'btn danger' }, 'Clear data');
   clearBtn.addEventListener('click', async () => {
@@ -137,7 +137,7 @@ async function render() {
         ),
       ),
       setting('Spell check', null, toggle(prefs.spellcheck, (v) => set({ spellcheck: v }))),
-      h('div', { class: 'setting', style: { flexWrap: 'wrap' } }, h('div', { class: 'grow' }, h('div', {}, 'Clear browsing data'), h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px' } }, label(what.history, 'History'), label(what.cookies, 'Cookies and site data'), label(what.cache, 'Cached files'), label(what.downloads, 'Download list'), label(what.permissions, 'Site permissions'))), clearRange, clearBtn),
+      h('div', { class: 'setting', style: { flexWrap: 'wrap' } }, h('div', { class: 'grow' }, h('div', {}, 'Clear browsing data'), h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px' } }, label(what.history, 'History'), label(what.cookies, 'Cookies and site data (all time — signs you out of websites)'), label(what.cache, 'Cached files'), label(what.downloads, 'Download list'), label(what.permissions, 'Site permissions'))), clearRange, clearBtn),
     ),
     ...blockerSection(call),
     ...extensionsSection(call),

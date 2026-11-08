@@ -6,6 +6,22 @@ import path from 'node:path';
 
 let logFile = null;
 const MAX_LOG = 1024 * 1024;
+// Started by a program that gave the browser a pipe for its output and then went away, every console write
+// throws EPIPE; logging must never throw (a throwing log call aborts whatever was logging). The console is
+// dropped for the rest of the run at its first failure.
+let consoleOk = true;
+for (const s of [process.stdout, process.stderr]) {
+  if (s && typeof s.on === 'function') s.on('error', () => (consoleOk = false));
+}
+
+function toConsole(fn, line) {
+  if (!consoleOk) return;
+  try {
+    fn(line);
+  } catch {
+    consoleOk = false;
+  }
+}
 
 /** Starts writing warnings and errors to `file` (best effort: logging never throws). */
 export function setLogFile(file) {
@@ -52,9 +68,9 @@ function write(level, msg, extra) {
   if (LEVELS[level] < threshold) return;
   const line = fmt(level, msg, extra);
   if (level === 'error' || level === 'warn') {
-    console.error(line);
     toFile(line);
-  } else console.log(line);
+    toConsole(console.error, line);
+  } else toConsole(console.log, line);
 }
 
 export const log = {

@@ -230,3 +230,11 @@ html, body { background: var(--frame); overflow: hidden; user-select: none; }
 :root[data-chrome-theme] #url { color: var(--omni-text); }
 :root[data-chrome-theme] #bookmarks-bar .bm, :root[data-chrome-theme] #bookmarks-bar .empty { color: var(--bookmark-text); }
 :root[data-chrome-theme] .tab:hover:not(.active) { background: color-mix(in srgb, var(--frame-text) 12%, transparent); }
+
+/* The password manager badge (shell.js renderToolbar) */
+#vault { position: relative; }
+#vault.locked { color: var(--faint); }
+#vault .vault-count {
+  position: absolute; right: 0; bottom: 1px; min-width: 15px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--accent);
+  color: var(--on-accent); font-size: 9.5px; font-weight: 700; line-height: 14px; text-align: center; pointer-events: none; box-shadow: 0 0 0 1.5px var(--toolbar);
+}

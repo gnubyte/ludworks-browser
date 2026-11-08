@@ -6,6 +6,9 @@ const call = (cmd, args) => window.lw.call(cmd, args);
 const act = (kind, action, data) => call('popup.action', { kind, action, data });
 const answer = (id, value) => call('prompt.answer', { id, value });
 
+/** The platform's own passkeys (in Chromium's dialog): Windows Hello / Touch ID, a phone, a security key. */
+const OTHER_DEVICE = window.lw.platform === 'win32' ? 'Use Windows Hello, a phone or a key' : window.lw.platform === 'darwin' ? 'Use Touch ID, a phone or a key' : 'Use a phone or a security key';
+
 function letter(name) {
   return h('span', { class: 'favicon letter', style: { width: '26px', height: '26px', fontSize: '13px', borderRadius: '7px' } }, (String(name || '?').trim()[0] || '?').toUpperCase());
 }
@@ -209,51 +212,90 @@ export const POPUPS = {
       }
       const total = data.total || data.items.length;
       box.append(h('div', { class: 'head' }, icon('key', { size: 18 }), h('div', {}, h('h2', {}, 'Passwords'), h('div', { class: 'sub' }, `${data.host || ''}${total > 1 ? ` · ${total} logins` : ''}`))));
-      const list = h('div', { class: 'list scroll' });
-      const rows = []; // [{row, text}] for the search box
-      if (!data.items.length) list.append(h('div', { class: 'pad muted' }, 'No saved logins for this site.'));
-      const codes = totpTicker(box);
-      for (const it of data.items) {
+      // One login: copy its username / password / one-time code, or fill it. A login saved for another website
+      // (from the whole-vault search) fills only after the user confirms that site.
+      const loginRow = (it, codes, host) => {
         const copy = (field, label) => {
           const btn = h('button', { class: 'icon-btn small', title: `Copy ${label}`, 'aria-label': `Copy ${label}`, onclick: async (e) => { e.stopPropagation(); copied(btn, await act('key', 'copy', { id: it.id, field }), field === 'username' ? 'user' : 'lock'); } }, icon(field === 'username' ? 'user' : 'lock', { size: 14 }));
           return btn;
         };
-        const row = h(
+        const sub = `${it.username || '—'}${it.site && it.otherSite ? ` · ${it.site}` : ''}${it.passkeys ? ` · ${it.passkeys} passkey${it.passkeys > 1 ? 's' : ''}` : ''}${it.otherHost ? ' · other host' : ''}`;
+        return h(
           'div',
           { class: 'item' },
           letter(it.name),
-          h('span', { class: 'grow' }, h('div', { class: 't' }, it.name), h('div', { class: 's' }, `${it.username || '—'}${it.passkeys ? ` · ${it.passkeys} passkey${it.passkeys > 1 ? 's' : ''}` : ''}${it.otherHost ? ' · other host' : ''}`)),
+          h('span', { class: 'grow' }, h('div', { class: 't' }, it.name), h('div', { class: 's' }, sub)),
           copy('username', 'username'),
           copy('password', 'password'),
           it.totp ? codes.chip(it) : null,
-          h('button', {
-            class: 'btn small primary',
-            onclick: async () => {
-              const allowOtherHost = !!it.otherHost && window.confirm('This login was saved for another host of this site. Fill it here?');
-              if (data.insecure && !window.confirm(`${data.host} is not using a secure (HTTPS) connection. Fill anyway?`)) return;
-              const r = await act('key', 'fill', { id: it.id, allowOtherHost, allowInsecure: !!data.insecure });
-              if (r && r.ok === false) window.alert(r.error.message === 'other_host' ? 'This login was saved for another host of this site.' : r.error.message);
-            },
-          }, 'Fill'),
+          data.fillable === false && it.otherSite
+            ? null
+            : h('button', {
+                class: 'btn small primary',
+                title: it.otherSite ? `Saved for ${it.site || 'another website'}` : 'Fill this login into the page',
+                onclick: async () => {
+                  const allowAnySite = !!it.otherSite && window.confirm(`“${it.name}” is saved for ${it.site || 'another website'}, not ${host || 'this page'}. Fill it here anyway?
+
+Only do this if you trust this page with that password.`);
+                  if (it.otherSite && !allowAnySite) return;
+                  const allowOtherHost = !!it.otherHost && window.confirm('This login was saved for another host of this site. Fill it here?');
+                  if (data.insecure && !window.confirm(`${data.host} is not using a secure (HTTPS) connection. Fill anyway?`)) return;
+                  const r = await act('key', 'fill', { id: it.id, allowOtherHost, allowAnySite, allowInsecure: !!data.insecure });
+                  if (r && r.ok === false) window.alert(r.error.message === 'other_host' ? 'This login was saved for another host of this site.' : r.error.message);
+                },
+              }, 'Fill'),
         );
-        rows.push({ row, text: `${it.name}\n${it.username || ''}`.toLowerCase() });
-        list.append(row);
-      }
-      // Many logins for one site (several Google accounts, say): a search box over the scrolling list.
-      if (data.items.length > 6) {
-        const none = h('div', { class: 'pad muted', hidden: true }, 'No matching logins.');
-        const input = h('input', { class: 'input', type: 'search', placeholder: `Search ${total} logins`, 'aria-label': 'Search logins', autocomplete: 'off', spellcheck: 'false' });
+      };
+      const siteList = () => {
+        const list = h('div', { class: 'list scroll' });
+        if (!data.items.length) list.append(h('div', { class: 'pad muted' }, data.browse ? `No saved logins for ${data.host || 'this page'}. Search all your logins above.` : 'No saved logins for this site.'));
+        const codes = totpTicker(list);
+        for (const it of data.items) list.append(Object.assign(loginRow(it, codes, data.host), { _text: `${it.name}
+${it.username || ''}`.toLowerCase() }));
+        return list;
+      };
+      let list = siteList();
+      // The toolbar badge searches the whole vault; the address-bar key filters this site's logins when there are many.
+      if (data.browse || data.items.length > 6) {
+        const input = h('input', { class: 'input', type: 'search', placeholder: data.browse ? 'Search all logins — name, username or website' : `Search ${total} logins`, 'aria-label': 'Search logins', autocomplete: 'off', spellcheck: 'false' });
+        let timer = null;
+        let seq = 0;
+        const show = (next) => {
+          list.replaceWith(next);
+          list = next;
+        };
         input.addEventListener('input', () => {
-          const q = input.value.trim().toLowerCase();
-          let shown = 0;
-          for (const r of rows) {
-            r.row.hidden = !!q && !r.text.includes(q);
-            if (!r.row.hidden) shown++;
+          const q = input.value.trim();
+          clearTimeout(timer);
+          if (!data.browse) {
+            let shown = 0;
+            for (const row of list.querySelectorAll('.item')) {
+              row.hidden = !!q && !row._text.includes(q.toLowerCase());
+              if (!row.hidden) shown++;
+            }
+            list.scrollTop = 0;
+            return;
           }
-          none.hidden = shown > 0;
-          list.scrollTop = 0;
+          if (!q) return show(siteList());
+          timer = setTimeout(async () => {
+            const mine = ++seq;
+            const r = await act('key', 'search', { q });
+            if (mine !== seq || !box.isConnected) return;
+            const res = h('div', { class: 'list scroll' });
+            const items = r && r.ok ? r.value.items : [];
+            if (r && r.ok) data.fillable = r.value.fillable;
+            if (!items.length) res.append(h('div', { class: 'pad muted' }, `No logins match “${q}”.`));
+            const codes = totpTicker(res);
+            for (const it of items) res.append(loginRow(it, codes, r.value.host));
+            show(res);
+          }, 120);
         });
-        list.append(none);
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            const first = list.querySelector('.item .btn.primary');
+            if (first) first.click();
+          }
+        });
         box.append(h('div', { class: 'search' }, input));
         setTimeout(() => input.focus(), 30);
       }
@@ -288,7 +330,7 @@ export const POPUPS = {
         !d.locked && d.logins && d.logins.length ? h('label', { class: 'field' }, h('span', {}, 'Save to'), target) : null,
         pass ? h('label', { class: 'field' }, h('span', {}, d.locked ? 'Master password (vault is locked)' : 'Confirm with your master password'), pass) : null,
       ),
-      h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => answer(id, { fallback: true }) }, 'Use another device or key'), h('button', { class: 'btn', onclick: () => answer(id, null) }, 'Cancel'), h('button', { class: 'btn primary', onclick: go }, 'Create passkey')),
+      h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => answer(id, { fallback: true }) }, OTHER_DEVICE), h('button', { class: 'btn', onclick: () => answer(id, null) }, 'Cancel'), h('button', { class: 'btn primary', onclick: go }, 'Create passkey')),
     );
   },
 
@@ -314,7 +356,7 @@ export const POPUPS = {
       h('div', { class: 'head' }, icon('passkey', { size: 22 }), h('div', {}, h('h2', {}, 'Sign in with a passkey'), h('div', { class: 'sub' }, d.rpId))),
       d.locked ? h('div', { class: 'pad' }, notice('Unlock your Ludworks vault to use the passkeys saved in it.')) : list,
       pass ? h('div', { class: 'pad' }, h('label', { class: 'field' }, h('span', {}, d.locked ? 'Master password' : 'Confirm with your master password'), pass)) : null,
-      h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => answer(id, { fallback: true }) }, 'Use another device or key'), h('button', { class: 'btn', onclick: () => answer(id, null) }, 'Cancel'), h('button', { class: 'btn primary', onclick: () => answer(id, { key: chosen, password: pass ? pass.value : '' }) }, 'Continue')),
+      h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => answer(id, { fallback: true }) }, OTHER_DEVICE), h('button', { class: 'btn', onclick: () => answer(id, null) }, 'Cancel'), h('button', { class: 'btn primary', onclick: () => answer(id, { key: chosen, password: pass ? pass.value : '' }) }, 'Continue')),
     );
   },
 };

@@ -76,6 +76,11 @@ export class WindowCtl extends EventEmitter {
     this.shell.setWindowOpenHandler(() => ({ action: 'deny' }));
     this.shell.on('will-navigate', (e) => e.preventDefault());
     this.shell.on('page-title-updated', (e) => e.preventDefault()); // the window title follows the active tab
+    // Who had the keyboard last (shell or page), for views that take it without asking (keepFocus).
+    this.lastFocus = 'page';
+    this.shell.on('focus', () => (this.lastFocus = 'shell'));
+    // The popup view, made once the window has settled rather than on the first popup (no delay then).
+    this.shell.once('did-finish-load', () => setTimeout(() => !this.destroyed && this.ensureOverlay(), 1500));
     this.shell.loadURL(SHELL_URL);
     this.win.once('ready-to-show', () => (this.showInactive ? this.win.showInactive() : this.win.show()));
 
@@ -169,6 +174,7 @@ export class WindowCtl extends EventEmitter {
     }
     this.tabs.splice(at, 0, tab);
     this.win.contentView.addChildView(tab.view);
+    this.watchFocus(tab);
     if (target) tab.load(target, { typed });
     if (active || !this.activeId) this.activate(tab.id);
     else this.layout();
@@ -253,6 +259,7 @@ export class WindowCtl extends EventEmitter {
     const at = Number.isInteger(index) ? Math.max(0, Math.min(index, this.tabs.length)) : this.tabs.length;
     this.tabs.splice(at, 0, tab);
     this.win.contentView.addChildView(tab.view);
+    this.watchFocus(tab);
     if (this.overlay && this.popup) this.win.contentView.addChildView(this.overlay); // keep an open popup above the page
     this.activate(tab.id, { focus });
     this.sendState();
@@ -394,6 +401,25 @@ export class WindowCtl extends EventEmitter {
     }, FLY_MS + 60);
   }
 
+  watchFocus(tab) {
+    if (tab.focusWatched === this) return;
+    tab.focusWatched = this;
+    tab.wc.on('focus', () => {
+      if (tab.ctl === this) this.lastFocus = 'page';
+    });
+  }
+
+  /** Puts the keyboard back where it was (shell or page) after a view took it without asking. */
+  keepFocus() {
+    if (this.destroyed || (this.popup && this.popup.focus)) return;
+    if (this.lastFocus === 'shell') {
+      if (!this.shell.isDestroyed()) this.shell.focus();
+    } else {
+      const t = this.activeTab();
+      if (t && !t.wc.isDestroyed()) t.wc.focus();
+    }
+  }
+
   // ----------------------------------------------------------------------------------- popups
   ensureOverlay() {
     if (this.overlay) return this.overlay;
@@ -411,6 +437,10 @@ export class WindowCtl extends EventEmitter {
         return;
       }
       this.browser.shortcuts.handle(event, input, this, this.activeTab());
+    });
+    // The engine gives a freshly loaded view the keyboard; a popup that did not ask for it gives it back.
+    this.overlay.webContents.on('focus', () => {
+      if (!(this.popup && this.popup.focus)) setTimeout(() => this.keepFocus(), 0);
     });
     this.overlay.webContents.on('blur', () => {
       if (!this.popup || !this.popup.closeOnBlur) return;
@@ -441,7 +471,7 @@ export class WindowCtl extends EventEmitter {
     await this.overlayReady;
     if (this.destroyed) return;
     const seq = (this.popupSeq = (this.popupSeq || 0) + 1);
-    this.popup = { kind, anchor, width: anchor.width + 2 * OVERLAY_PAD.x, height: anchor.height || 40, closeOnBlur, modal, seq };
+    this.popup = { kind, anchor, width: anchor.width + 2 * OVERLAY_PAD.x, height: anchor.height || 40, closeOnBlur, modal, seq, focus };
     this.win.contentView.addChildView(ov); // topmost
     // The card's room below its anchor (window bottom, see positionOverlay): long lists scroll inside it.
     const ch = this.win.getContentSize()[1];
