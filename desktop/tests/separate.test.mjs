@@ -32,7 +32,7 @@ test('separate: numbered profiles next to the main one, recognised by their fold
 });
 
 test('separate: only web pages and files move', () => {
-  for (const u of ['https://www.twitch.tv/x', 'http://192.0.2.10:43594/', 'file:///C:/game/index.html']) assert.ok(canMove(u), u);
+  for (const u of ['https://www.twitch.tv/x', 'http://192.168.1.50:43594/', 'file:///C:/game/index.html']) assert.ok(canMove(u), u);
   for (const u of ['ludworks://settings/', 'ludworks://newtab/', 'about:blank', 'chrome-extension://abc/popup.html', '', null]) assert.ok(!canMove(u), String(u));
 });
 
@@ -266,7 +266,7 @@ function linkNav(tab, url, isMainFrame = true) {
 
 test('separate: sites are http(s) origins', () => {
   assert.equal(siteOf('https://www.twitch.tv/caedrel?x=1'), 'https://www.twitch.tv');
-  assert.equal(siteOf('http://192.0.2.10:43594/'), 'http://192.0.2.10:43594');
+  assert.equal(siteOf('http://192.168.1.50:43594/'), 'http://192.168.1.50:43594');
   for (const u of ['file:///C:/game/index.html', 'ludworks://settings/', '', null]) assert.equal(siteOf(u), '', String(u));
 });
 
@@ -286,11 +286,11 @@ test('separate: each remembered site has its own process, remembered with it; a 
 test('separate: a heavy page nobody has used yet moves at once, into a process of its own', () => {
   const b = fakeBrowser();
   const sp = new SeparateProcess(b);
-  const tab = fakeTab('http://192.0.2.10:43594/');
+  const tab = fakeTab('http://192.168.1.50:43594/');
   sp.attachTab(tab);
   sp.gpuHeavy(tab);
   assert.deepEqual(b.moved, [tab]);
-  assert.deepEqual(b.meta.get('separate_sites'), { 'http://192.0.2.10:43594': 2 });
+  assert.deepEqual(b.meta.get('separate_sites'), { 'http://192.168.1.50:43594': 2 });
 });
 
 test('separate: a heavy page the user has clicked or typed in stays (a reload would lose that), with a button to move it', () => {

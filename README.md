@@ -83,7 +83,7 @@ node scripts/dev/preview.mjs      # dev-only popup preview at http://127.0.0.1:1
 ```
 
 On the Ludworks dev machine the toolchain lives in WSL:
-`bash /c/Users/phsta/code/ludworks/.dev/wsl.sh ludworks-browser 'node --test "tests/*.test.mjs" && node build.mjs'`.
+`bash <workspace>/.dev/wsl.sh ludworks-browser 'node --test "tests/*.test.mjs" && node build.mjs'`.
 
 ### What the tests cover
 
