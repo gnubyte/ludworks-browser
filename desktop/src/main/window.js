@@ -562,7 +562,7 @@ export class WindowCtl extends EventEmitter {
       this.stateTimer = null;
       if (this.destroyed || this.shell.isDestroyed()) return;
       const t = this.activeTab();
-      const title = `${this.agent ? `${this.agent.client} · ` : ''}${(t && t.title) || 'New Tab'} - Ludworks Browser${this.private ? ' (Private)' : ''}${this.browser.processNumber > 1 ? ` (Process ${this.browser.processNumber})` : ''}`;
+      const title = `${this.agent ? `${this.agent.client} · ` : ''}${(t && t.title) || 'New Tab'} - Ludworks Browser${this.private ? ' (Private)' : ''}`;
       if (this.win.getTitle() !== title) this.win.setTitle(title);
       const st = this.state();
       if (!!st.control !== !!this.controlFramed) {

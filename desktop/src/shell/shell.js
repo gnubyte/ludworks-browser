@@ -747,21 +747,6 @@ function renderControl() {
   );
 }
 
-// A window of a separate engine process (src/main/separate.js): a chip in the tab strip says which process it is.
-function renderSeparate() {
-  const chip = $('separate-chip');
-  if (!state.separateProcess) {
-    if (chip) chip.remove();
-    return;
-  }
-  if (chip && chip.dataset.process === String(state.processNumber)) return;
-  if (chip) chip.remove();
-  const tip = `This window runs in process ${state.processNumber}, with its own GPU process, so heavy pages here and in your other browser processes do not slow each other down. Your sign-ins and site data are here too.`;
-  const el = h('div', { id: 'separate-chip', title: tip }, icon('layers', { size: 14 }), `Process ${state.processNumber}`);
-  el.dataset.process = state.processNumber;
-  $('tabstrip').insertBefore(el, $('wincontrols'));
-}
-
 // A Chrome theme (src/main/themes): its colours as CSS variables over the light or dark base, its images as
 // url() variables the stylesheet tiles (shell.css [data-chrome-theme]).
 let themeKey = '';
@@ -797,7 +782,6 @@ function render(s) {
   root.dataset.htmlfs = String(!!s.htmlFullscreen);
   renderAgent();
   renderControl();
-  renderSeparate();
   renderTabs();
   renderToolbar();
   renderFeatureButtons();

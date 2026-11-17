@@ -100,8 +100,6 @@ export class Tab extends EventEmitter {
 
   // ---------------------------------------------------------------------------- navigation
   load(url, { typed = false } = {}) {
-    // a site that opens in its separate process (separate.js) does not load here
-    if (this.browser.separate && this.browser.separate.interceptLoad(this, url)) return;
     this.error = null;
     this.typedNavigation = typed;
     this.url = url;

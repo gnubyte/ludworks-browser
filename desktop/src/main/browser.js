@@ -1,8 +1,6 @@
 // The browser: profile services, sessions, windows, commands and IPC wiring.
 
 import { app, session, ipcMain, dialog, nativeTheme, shell, Menu, desktopCapturer, screen, powerMonitor, webContents as allWebContents } from 'electron';
-import { existsSync, renameSync } from 'node:fs';
-import { registrableDomain } from '../lib/url-match.js';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -19,9 +17,7 @@ import { fixupInput, originOf, hostOf, displayUrl } from './util/urls.js';
 import { currentEngine, searchUrl, fetchSuggestions, ENGINES } from './search.js';
 import { chromeUserAgent } from './util/ua.js';
 import { log } from './util/log.js';
-import { APP_NAME, defaultProfileDir } from './paths.js';
-import { canMove, copyProfile, COPY_MARKER, importHandoff, launch, otherEngineCommand, parseIncomingArg, rotateDeviceId, separateNumberOf, separateProcessDir, writeHandoff, SeparateProcess } from './separate.js';
-import { readSecret, writeSecret } from './account/files.js';
+import { APP_NAME } from './paths.js';
 import { DefaultBrowser } from './default-browser.js';
 import { WebRequestHub } from './webrequest.js';
 import { tabWebPreferences } from './tab.js';
@@ -35,8 +31,6 @@ export class Browser {
   constructor({ profileDir, explicitProfile, appDir }) {
     this.profileDir = profileDir;
     this.explicitProfile = explicitProfile;
-    this.processNumber = separateNumberOf(profileDir) ?? 1; // 1: the main browser; 2, 3…: separate processes (separate.js)
-    this.separateProcess = this.processNumber > 1;
     this.appDir = appDir;
     this.dev = !app.isPackaged || process.env.LUDWORKS_DEV === '1';
     this.paths = {
@@ -99,8 +93,6 @@ export class Browser {
     const { Pip } = await import('./pip.js');
     this.pip = new Pip(this);
     this.registerFeature(this.pip);
-    this.separate = new SeparateProcess(this);
-    this.registerFeature(this.separate);
     setInterval(() => this.privacy.sweep(new Set(allWebContents.getAllWebContents().map((w) => w.id))), 60 * 1000).unref();
     const { Blocker } = await import('./blocker/blocker.js');
     this.blocker = new Blocker(this);
@@ -129,16 +121,13 @@ export class Browser {
     nativeTheme.on('updated', () => this.forEachWindow((w) => w.applyTheme()));
 
     this.startEngineComponents();
-    // Pages wait until the cached filters are in place, extensions are loaded (content scripts) and cookies a
-    // move sent ahead (separate.js) are imported — also on a cold start; the windows do not: they show at once
-    // and their tabs start loading when this opens (Tab.load).
+    // Pages wait until the cached filters are in place and extensions are loaded (content scripts); the windows
+    // do not: they show at once and their tabs start loading when this opens (Tab.load).
     this.pagesGate = Promise.all([this.blocker.whenReady(1500), this.extensions.whenReady(2500)])
-      .then(() => importHandoff(this.session, this.profileDir, argv, { read: readSecret }, { keepExisting: !this.separateProcess }))
       .catch((e) => log.warn('page start gate failed', { message: e && e.message }))
       .finally(() => (this.pagesGate = null));
     const restored = this.prefs.get('startup') === 'restore' ? this.restoreSession() : 0;
     const urls = [...this.urlsFromArgv(argv), ...earlyUrls];
-    this.separate.onCommandLine(argv, urls);
     const firstRun = !this.db.getMeta('welcomed', false);
     if (firstRun) this.db.setMeta('welcomed', true);
     if (!restored) this.newWindow({ urls: urls.length ? urls : [firstRun ? 'ludworks://welcome/' : this.newTabUrl()] });
@@ -273,78 +262,6 @@ export class Browser {
     this.moveTabToWindow(tab, to);
   }
 
-  /**
-   * Moves a tab into the other engine process (separate.js): its own numbered separate process from the main
-   * browser, the main one from a separate process. The page loads afresh there with that site's cookies sent
-   * ahead; the tab closes here once that process has started. A site moved to a separate process opens in its
-   * process from now on (SeparateProcess).
-   */
-  moveTabToOtherEngine(tab) {
-    const url = tab.wc.isDestroyed() ? tab.url : tab.wc.getURL() || tab.url;
-    if (!canMove(url)) return;
-    const proc = this.separateProcess ? null : this.separate.targetFor(url);
-    this.sendToOtherEngine(url, proc, tab.ctl.private ? null : this.session)
-      .then(() => {
-        if (!tab.destroyed) tab.ctl.closeTab(tab.id);
-      })
-      .catch(() => {});
-  }
-
-  /**
-   * Opens `url` in the other engine process (started, or reached through its single-instance lock): the separate
-   * process `proc` from the main browser, the main one from a separate process. A fresh separate profile starts
-   * as a copy of this one (separate.js copyProfile, with a browser-sync device id of its own), and when `ses` is
-   * this page's session, its cookies for the site travel ahead in a handoff file the other instance imports
-   * before the page loads — so its sign-ins and data are already there.
-   * @param {string} url @param {number|null} proc @param {object|null} ses null to carry no cookies (private tabs)
-   */
-  async sendToOtherEngine(url, proc = null, ses = this.session) {
-    const target = this.separateProcess ? path.dirname(this.profileDir) : separateProcessDir(this.profileDir, proc ?? 2);
-    // A separate profile from before profiles were copied started empty — no sign-ins, no account: set it aside
-    // (when its process is not running, the folder can be renamed) and copy the main one in its place.
-    if (!this.separateProcess && existsSync(target) && !existsSync(path.join(target, COPY_MARKER))) {
-      const aside = `${target} (empty, set aside ${new Date().toISOString().slice(0, 10)})`;
-      try {
-        if (!existsSync(aside)) renameSync(target, aside);
-        log.info('empty separate profile set aside', { process: proc ?? 2 });
-      } catch {
-        /* in use: it keeps running as it is */
-      }
-    }
-    if (!this.separateProcess && !existsSync(target)) {
-      await this.flushCookies(); // the copy gets the latest sign-ins
-      const res = await copyProfile(this.profileDir, target);
-      rotateDeviceId(path.join(target, 'Profile.sqlite'));
-      log.info('separate process profile created', { process: proc ?? 2, ...res });
-    }
-    let incoming = null;
-    if (ses) {
-      // the site's cookies on its whole registrable domain (www., accounts., …), not only those this URL gets
-      const host = (() => {
-        try {
-          return new URL(url).hostname;
-        } catch {
-          return '';
-        }
-      })();
-      const site = registrableDomain(host) || host;
-      const byKey = new Map();
-      for (const c of [...(await ses.cookies.get({ url }).catch(() => [])), ...(site ? await ses.cookies.get({ domain: site }).catch(() => []) : [])]) byKey.set(`${c.domain}|${c.path}|${c.name}`, c);
-      const cookies = [...byKey.values()];
-      incoming = await writeHandoff(target, cookies, { write: writeSecret });
-    }
-    return this.openInOtherEngine(url, { process: proc, incoming });
-  }
-
-  /** Opens `url` in the other engine process (started, or reached through its single-instance lock). */
-  openInOtherEngine(url, { process: proc = null, incoming = null } = {}) {
-    const cmd = otherEngineCommand({ execPath: process.execPath, appPath: process.defaultApp ? app.getAppPath() : null, profileDir: this.profileDir, defaultProfileDir: defaultProfileDir(), url, process: proc, incoming });
-    return launch(cmd).catch((e) => {
-      log.warn('could not start the other engine process', { message: e.message });
-      throw e;
-    });
-  }
-
   rememberWindowState(ctl) {
     if (ctl.private || ctl.agent || ctl.win.isFullScreen() || ctl.win.isMinimized()) return;
     clearTimeout(this.winStateTimer);
@@ -387,9 +304,6 @@ export class Browser {
     if (this.agentRequest(argv) && !this.urlsFromArgv(argv).length) return;
     const isPrivate = argv.includes('--incognito') || argv.includes('--private') || argv.includes('--inprivate');
     const urls = this.urlsFromArgv(argv);
-    this.separate.onCommandLine(argv, urls);
-    // a move sent cookies ahead (separate.js): they are in place before the page opens here
-    if (parseIncomingArg(argv)) await importHandoff(this.session, this.profileDir, argv, { read: readSecret }, { keepExisting: !this.separateProcess });
     if (isPrivate || argv.includes('--new-window')) this.newWindow({ urls, private: isPrivate });
     else if (urls.length) this.openUrls(urls);
     else this.ensureWindow();
@@ -603,12 +517,6 @@ export class Browser {
     if (/^ludworks:/i.test(url) && !/^ludworks:/i.test(tab.wc.getURL())) return { action: 'deny' };
     const ctl = tab.ctl;
     const background = disposition === 'background-tab';
-    // A remembered site (separate.js) opens in its separate process, not in a new tab here. Sized popups (sign-in,
-    // payment) stay with their opener.
-    if (!(disposition === 'new-window' && details.features) && this.separate.shouldDivert(tab, url)) {
-      this.openInOtherEngine(url).catch(() => ctl.newTab({ url, active: !background, opener: tab }));
-      return { action: 'deny' };
-    }
     // Websites opened from an internal page (e.g. "Open" on the Passwords page) get a normal tab of their
     // own: no window.opener back to the ludworks:// page, and the usual content preload (autofill, passkeys).
     if (/^ludworks:/i.test(tab.wc.getURL()) && !/^ludworks:/i.test(url)) {
@@ -1039,8 +947,6 @@ export class Browser {
       account: this.account ? this.account.summary() : { phase: 'logged_out' },
       dev: this.dev,
       version: app.getVersion(),
-      separateProcess: this.separateProcess,
-      processNumber: this.processNumber,
     };
   }
 
@@ -1301,9 +1207,6 @@ export class Browser {
       case 'shortcut':
         if (frame === tab.wc.mainFrame || frame) this.shortcuts.unhandled(tab.ctl, tab, args);
         break;
-      case 'gpu.heavy':
-        this.separate.gpuHeavy(tab);
-        break;
       default:
         this.autofill.contentMessage(tab, frame, cmd, args);
     }
@@ -1480,8 +1383,6 @@ export class Browser {
         return `${title.length > 40 ? `${title.slice(0, 40)}…` : title}${w.tabs.length > 1 ? ` and ${w.tabs.length - 1} more` : ''}`;
       };
       if (others.length) move.push({ label: 'Move to window', submenu: others.map((w) => ({ label: name(w), click: () => this.moveTabToWindow(tab, w) && w.win.focus() })) });
-      // never out of a private window: the other process keeps what it loads
-      if (!ctl.private) move.push({ label: this.separateProcess ? 'Move to main process' : 'Move to separate process', enabled: canMove(tab.wc.getURL()), click: () => this.moveTabToOtherEngine(tab) });
     }
     Menu.buildFromTemplate([
       { label: 'New tab to the right', click: () => ctl.newTab({ index: i + 1 }) },

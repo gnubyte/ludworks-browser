@@ -12,11 +12,6 @@ html, body { background: var(--frame); overflow: hidden; user-select: none; }
 #drag-spacer { flex: 1 1 0; min-width: 40px; height: 100%; }
 #wincontrols { width: var(--wco-width, 140px); flex: none; height: 100%; }
 #newtab { -webkit-app-region: no-drag; margin: 0 2px 4px 4px; width: 30px; height: 30px; border-radius: 8px; }
-#separate-chip {
-  -webkit-app-region: no-drag; align-self: center; flex: none; display: inline-flex; align-items: center; gap: 5px;
-  height: 24px; padding: 0 9px; margin: 0 6px; border-radius: 12px; background: var(--accent-soft); color: var(--accent);
-  font-size: 12px; font-weight: 600; white-space: nowrap; cursor: default;
-}
 
 .tab {
   -webkit-app-region: no-drag; position: relative; height: 34px; flex: 1 1 220px; min-width: 52px; max-width: 232px;
@@ -225,7 +220,7 @@ html, body { background: var(--frame); overflow: hidden; user-select: none; }
 :root[data-chrome-theme] .tab { color: var(--frame-text); }
 :root[data-chrome-theme] .tab.active { color: var(--tab-text); }
 :root[data-chrome-theme] .tab .close { color: inherit; }
-:root[data-chrome-theme] #newtab, :root[data-chrome-theme] #separate-chip { color: var(--frame-text); }
+:root[data-chrome-theme] #newtab { color: var(--frame-text); }
 :root[data-chrome-theme] #toolbar .icon-btn:not(.on):not([class*="tone-"]) { color: var(--icon); }
 :root[data-chrome-theme] #url { color: var(--omni-text); }
 :root[data-chrome-theme] #bookmarks-bar .bm, :root[data-chrome-theme] #bookmarks-bar .empty { color: var(--bookmark-text); }

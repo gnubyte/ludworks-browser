@@ -73,21 +73,6 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   attribution, with the page's alignment and repeat) recolour the tab strip, toolbar, bookmarks bar, window frame and
   new tab page over a light or dark base picked from the toolbar colour. One at a time, no prompt (as in Chrome);
   private windows keep their own look; Settings → Appearance shows it and resets to the default.
-* **Separate processes** (`src/main/separate.js`): "Move to separate process" in the tab menu opens the page in
-  another browser instance with its own GPU process, so heavy pages (a WebGL game and a live stream) stop slowing each
-  other down. Chromium draws all of a browser's windows through one GPU process, Chrome and Edge included. Each moved
-  site gets a numbered process of its own — "Process 2", "Process 3"… in the window title and a chip in the tab strip
-  (the main browser is process 1) — and opens in it from then on. A process's profile (`<profile>/Separate Process`,
-  `Separate Process 3`, …) starts as a copy of the main one, so sign-ins, site data, history and the Ludworks account
-  are already there, and every move also sends that site's current cookies ahead (in both directions, OS-encrypted,
-  imported before the page loads); a copied profile gets a browser-sync device id of its own. The way back is always
-  at hand: every separate-process window has a "Move to main process" toolbar button (also in the tab menu), and when
-  the main browser diverts a link of a remembered site, a toolbar button offers to open it there instead — both
-  forget the site, so it opens in the main browser from then on. GPU-heavy pages move on their own (Settings →
-  System, on by default): the tab
-  preload counts WebGL/WebGPU draw calls (`src/preload/features/gpu-meter.js`), and a page keeping up 20,000 a second
-  for 10 seconds (games, not page backgrounds or video) moves at once if nobody has clicked or typed in it yet, else
-  gets a toolbar button.
 * **Picture in picture** (`src/main/pip.js`): toolbar button when the page has a video, Ctrl+Shift+P, right-click a
   video (also inside iframes); optional automatic picture in picture when you switch away from a playing video.
 * **Image and video saver** (`src/main/media/`): toolbar badge counting the page's images and videos; a popup with

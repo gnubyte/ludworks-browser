@@ -9,8 +9,7 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { packageDisplayName, packageRedirectingWrites } from './package-storage.js';
-import { APP_NAME, APP_USER_MODEL_ID, profileDirFromArgs, defaultProfileDir } from './paths.js';
-import { isSeparateProfile, samePath } from './separate.js';
+import { APP_NAME, APP_USER_MODEL_ID, profileDirFromArgs, defaultProfileDir, inDefaultProfile } from './paths.js';
 import { log, setLogFile } from './util/log.js';
 
 const explicitProfile = profileDirFromArgs(process.argv);
@@ -28,8 +27,8 @@ if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
 // Remote debugging hands every cookie and open page to whoever connects. Like Chrome 136+, it is
 // only honoured for a non-default profile directory (tests, developer profiles): not for the default
-// one even when named, nor for a separate-process profile (separate.js), which holds sign-ins too.
-if (!explicitProfile || samePath(profileDir, defaultProfileDir()) || isSeparateProfile(profileDir)) {
+// one even when named, nor for a folder inside it, which holds sign-ins too.
+if (!explicitProfile || inDefaultProfile(profileDir)) {
   for (const sw of ['remote-debugging-port', 'remote-debugging-pipe', 'remote-allow-origins']) app.commandLine.removeSwitch(sw);
 }
 
@@ -110,9 +109,8 @@ async function boot() {
  * the user's own context. Returns true when this process must not start the browser.
  */
 function refuseForeignPackage() {
-  // a --profile naming the default profile or one of its separate-process profiles is checked like no --profile
-  const ownProfile = samePath(profileDir, defaultProfileDir()) || isSeparateProfile(profileDir);
-  if ((explicitProfile && !ownProfile) || process.platform !== 'win32' || process.defaultApp) return false;
+  // a --profile naming the default profile (or a folder inside it) is checked like no --profile
+  if ((explicitProfile && !inDefaultProfile(profileDir)) || process.platform !== 'win32' || process.defaultApp) return false;
   const pkg = packageRedirectingWrites(profileDir);
   if (!pkg) return false;
   log.info('started inside another app package', { package: pkg });
