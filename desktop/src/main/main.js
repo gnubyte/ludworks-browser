@@ -55,7 +55,7 @@ app.on('open-url', (e, url) => {
   else pendingUrls.push(url);
 });
 
-const installerMode = process.argv.includes('--ludworks-integrate') || process.argv.includes('--ludworks-uninstall');
+const installerMode = ['--ludworks-integrate', '--ludworks-uninstall', '--ludworks-unintegrate'].some((a) => process.argv.includes(a));
 if (installerMode) {
   // Run by the Windows installer / Settings → Apps: register or unregister, then exit.
   (async () => {

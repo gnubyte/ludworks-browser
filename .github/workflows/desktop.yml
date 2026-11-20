@@ -1,19 +1,28 @@
-# Ludworks Browser desktop (desktop/): tests, then Windows / Linux / macOS packages.
+# Ludworks Browser desktop (desktop/): tests, then Windows (setup .exe + MSI), Linux (.deb, .tar.gz) and
+# macOS (.dmg) packages. release.yml calls this with the release version, stamped into package.json first.
 #
 # Supply chain (same rules as ci.yml, enforced by .github/check-supply-chain.mjs): actions pinned to
 # commit SHAs, no npm packages, no PyPI. The only third-party binary is the browser engine (castlabs
 # Electron for Content Security), downloaded by desktop/build.mjs and verified against the SHA-256
-# sums pinned in desktop/electron.lock.json. Go tools (winres, setup, mkdeb) are stdlib-only.
+# sums pinned in desktop/electron.lock.json. Go tools (winres, setup, mkdeb) are stdlib-only. The MSI is
+# built with WiX 5 (the `wix` .NET tool, pinned by version).
 name: Desktop browser
 
 on:
   push:
+    branches-ignore: [main] # main: release.yml builds (and releases) every push
     paths: ['desktop/**', 'src/lib/**', 'scripts/lib/**', '.github/workflows/desktop.yml']
   pull_request:
     paths: ['desktop/**', 'src/lib/**', 'scripts/lib/**', '.github/workflows/desktop.yml']
   workflow_dispatch:
   # release.yml builds the release packages with exactly these jobs.
   workflow_call:
+    inputs:
+      version:
+        description: Release version (X.Y.Z) written into package.json before packaging
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -57,7 +66,7 @@ jobs:
         run: node desktop/scripts/bump-electron.mjs --check || true
 
   windows:
-    name: Windows x64 installer
+    name: Windows x64 (setup .exe, MSI)
     needs: test
     runs-on: windows-2025
     timeout-minutes: 30
@@ -73,14 +82,46 @@ jobs:
         with:
           go-version-file: desktop/tools/go.mod
           cache: false
-      - name: Package and build the installer
+      - name: Stamp the release version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));p.version=process.env.VERSION;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+      - name: Package and build the setup .exe
         run: node desktop/build.mjs all --target=win32-x64
+      - name: Install WiX 5
+        run: dotnet tool install --global wix --version 5.0.2
+      - name: Build the MSI
+        env:
+          DOTNET_ROLL_FORWARD: Major # WiX 5 targets .NET 6; the runner has newer runtimes
+        run: node desktop/build.mjs msi --target=win32-x64
+      - name: The MSI installs, registers and uninstalls cleanly (per user, no admin)
+        shell: pwsh
+        run: |
+          $msi = (Get-Item desktop/dist/LudworksBrowser-*-win-x64.msi).FullName
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /l*v `"$env:RUNNER_TEMP\msi-install.log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\msi-install.log" -Tail 80; throw "install failed ($($p.ExitCode))" }
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Ludworks Browser'
+          if (-not (Test-Path (Join-Path $dir 'LudworksBrowser.exe'))) { throw 'the browser was not installed' }
+          $caps = 'HKCU:\Software\Clients\StartMenuInternet\Ludworks Browser\Capabilities'
+          for ($i = 0; $i -lt 30 -and -not (Test-Path $caps); $i++) { Start-Sleep 1 }
+          if (-not (Test-Path $caps)) { throw 'the browser did not register itself (Default apps)' }
+          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\LudworksBrowser') { throw 'an MSI install must not add its own uninstall entry' }
+          $p = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /l*v `"$env:RUNNER_TEMP\msi-uninstall.log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\msi-uninstall.log" -Tail 80; throw "uninstall failed ($($p.ExitCode))" }
+          for ($i = 0; $i -lt 15 -and (Test-Path $dir); $i++) { Start-Sleep 1 }
+          if (Test-Path $dir) { Get-ChildItem -Recurse $dir | Select-Object -First 20 | Out-String | Write-Host; throw 'the install folder was left behind' }
+          if (Test-Path 'HKCU:\Software\Clients\StartMenuInternet\Ludworks Browser') { throw 'the registration was left behind' }
+          Write-Host 'MSI install / uninstall OK'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ludworks-browser-windows-x64
           path: |
             desktop/dist/LudworksBrowserSetup-*.exe
             desktop/dist/LudworksBrowserSetup-*.exe.sha256
+            desktop/dist/LudworksBrowser-*.msi
+            desktop/dist/LudworksBrowser-*.msi.sha256
           if-no-files-found: error
 
   linux:
@@ -103,6 +144,12 @@ jobs:
         with:
           go-version-file: desktop/tools/go.mod
           cache: false
+      - name: Stamp the release version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));p.version=process.env.VERSION;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
       - name: Package
         run: node desktop/build.mjs all --target=linux-${{ matrix.arch }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -134,6 +181,12 @@ jobs:
         with:
           go-version-file: desktop/tools/go.mod
           cache: false
+      - name: Stamp the release version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));p.version=process.env.VERSION;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
       - name: Package the app bundle
         run: node desktop/build.mjs package --target=darwin-${{ matrix.arch }}
       - name: Ad-hoc sign (no Apple Developer ID configured) and build the disk image

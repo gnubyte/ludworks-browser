@@ -1,0 +1,42 @@
+<!--
+  Ludworks Browser MSI (WiX 5, built by `node desktop/build.mjs msi`): a per-user install like the setup .exe —
+  no administrator rights — into %LOCALAPPDATA%\Programs\Ludworks Browser. Every packaged file goes in (Files
+  harvest); after the files are in place the browser registers itself (Default apps, shortcuts) with
+  the ludworks-integrate switch (MSI mode), and on uninstall takes that back with ludworks-unintegrate before Windows
+  Installer removes the files, then the emptied folder tree goes too (per-user components cannot list every
+  folder for RemoveFile: ICE38/ICE64 are expected for a per-user install). The uninstall entry is Windows
+  Installer's own. The user's profile, in
+  %LOCALAPPDATA%\Ludworks Browser\User Data, is never touched. Upgrades replace older versions (MajorUpgrade).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Ludworks Browser" Manufacturer="Ludworks" Version="$(Version)" UpgradeCode="3CBD4A8C-784A-42B4-AD01-9716E79C0649" Scope="perUser" Compressed="yes" Language="1033">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Ludworks Browser is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Icon Id="LudworksBrowser.ico" SourceFile="$(Icon)" />
+    <Property Id="ARPPRODUCTICON" Value="LudworksBrowser.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/gnubyte/ludworks-browser" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Ludworks Browser" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="BrowserFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(SourceDir)\**" />
+    </ComponentGroup>
+    <Feature Id="Browser" Title="Ludworks Browser">
+      <ComponentGroupRef Id="BrowserFiles" />
+    </Feature>
+
+    <CustomAction Id="Integrate" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]LudworksBrowser.exe&quot; --ludworks-integrate --msi" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <CustomAction Id="Unintegrate" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]LudworksBrowser.exe&quot; --ludworks-unintegrate" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <CustomAction Id="RemoveInstallFolder" Directory="ProgramsFolder" ExeCommand="&quot;[System64Folder]cmd.exe&quot; /d /c rmdir /s /q &quot;[INSTALLFOLDER]&quot;" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="Integrate" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="Unintegrate" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RemoveInstallFolder" After="RemoveFolders" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

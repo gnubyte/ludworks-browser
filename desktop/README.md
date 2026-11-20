@@ -135,7 +135,7 @@ window of its own** — framed in violet, labelled "Claude Code is working in th
 ```
 desktop/
   electron.lock.json      pinned engine (castlabs ECS) + SHA-256 per platform
-  build.mjs               stage | fetch | package | installer | linux-packages | all   (Node built-ins only)
+  build.mjs               stage | fetch | package | installer | msi | linux-packages | all   (Node built-ins only)
   src/main/               main process: browser.js (windows, commands, IPC), window.js, tab.js, protocols.js,
                           account/ (sign-in, vault, browser sync, TLS pinning), autofill.js, passkeys.js, cbor.js,
                           import/ (Bitwarden/KeePass/CSV, other browsers), blocker/ (content blocker),
@@ -175,6 +175,20 @@ Run the staged app without packaging: `.cache/electron/<version>/win32-x64/elect
 Browser`, registers Default-apps capabilities, Start menu/desktop shortcuts and an uninstall entry; your profile lives in
 `%LOCALAPPDATA%\Ludworks Browser\User Data`. Re-running a newer installer upgrades in place. `--silent`,
 `--no-desktop-shortcut`, `--no-launch`, `--dir=` are supported. Uninstall from Settings → Apps.
+
+`LudworksBrowser-<v>-win-x64.msi` is the same per-user install as an MSI (Intune, GPO, `msiexec /i … /qn`), built by
+`node desktop/build.mjs msi` with WiX 5 (`dotnet tool install --global wix --version 5.0.2`) from
+`packaging/windows/ludworks-browser.wxs`. The browser registers itself after install (`--ludworks-integrate --msi`,
+no uninstall entry of its own: Windows Installer lists it) and unregisters before removal (`--ludworks-unintegrate`).
+CI installs and uninstalls every MSI on a clean runner.
+
+### Releases
+
+Every push to `main` is released (`.github/workflows/release.yml`): the next version is the latest `vX.Y.Z` tag with
+its patch number raised — or `package.json`'s version when that is higher, to start a new minor or major — and the
+Windows setup .exe and MSI, the Linux .deb/.tar.gz (x64, arm64), the macOS .dmg (arm64, x64) and the extension zips
+are built with it and published as a GitHub Release that tags the commit. Pushing a `vX.Y.Z` tag releases that
+version; "Run workflow" releases `main` on demand.
 
 Started by a packaged (MSIX) app such as Claude, the browser would inherit that app's file virtualization and keep part
 of the profile in `%LOCALAPPDATA%\Packages\<app>\LocalCache`. Such a start hands its link to a running browser, or

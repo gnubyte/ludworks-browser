@@ -319,6 +319,26 @@ export function windowsInstaller(target) {
   return out;
 }
 
+/**
+ * LudworksBrowser-<version>-win-<arch>.msi from the packaged browser, with WiX 5 (packaging/windows/ludworks-browser.wxs;
+ * `wix` on PATH, or LUDWORKS_WIX). Per-user like the setup .exe; the browser registers itself after install.
+ */
+export function windowsMsi(target) {
+  const [, arch] = target.split('-');
+  const appDir = path.join(DESKTOP, 'dist', target, PRODUCT);
+  if (!existsSync(appDir)) throw new Error(`package ${target} first`);
+  const out = path.join(DESKTOP, 'dist', `LudworksBrowser-${PKG.version}-win-${arch}.msi`);
+  console.log('==> building the MSI');
+  const args = ['build', path.join(DESKTOP, 'packaging', 'windows', 'ludworks-browser.wxs'), '-arch', arch === 'arm64' ? 'arm64' : 'x64', '-d', `Version=${PKG.version}`, '-d', `SourceDir=${appDir}`, '-d', `Icon=${path.join(DESKTOP, 'build-res', 'icon.ico')}`, '-o', out];
+  const res = spawnSync(process.env.LUDWORKS_WIX || 'wix', args, { stdio: 'inherit' });
+  if (res.status !== 0) throw new Error(`wix build failed${res.error ? ` (${res.error.message})` : ''}: install WiX 5 (dotnet tool install --global wix --version 5.0.2)`);
+  rmSync(out.replace(/\.msi$/, '.wixpdb'), { force: true });
+  const sum = sha256(readFileSync(out));
+  writeFileSync(`${out}.sha256`, `${sum}  ${path.basename(out)}\n`);
+  console.log(`==> ${out}\n    sha256 ${sum}`);
+  return out;
+}
+
 // -------------------------------------------------------------------------------------- linux
 const LINUX_EXEC = new Set(['ludworks-browser', 'chrome-sandbox', 'chrome_crashpad_handler', 'lwb']);
 
@@ -389,6 +409,7 @@ async function main() {
   }
   else if (cmd === 'package') await packageTarget(target);
   else if (cmd === 'installer') windowsInstaller(target);
+  else if (cmd === 'msi') windowsMsi(target);
   else if (cmd === 'all') {
     if (target.startsWith('win32')) buildTools();
     await packageTarget(target);
