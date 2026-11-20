@@ -49,9 +49,11 @@ export function installWebAuthnShim(bridge) {
     for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
     return u.buffer;
   };
+  // Own properties stay writable: pages replace toJSON on the credential they get (GitHub's webauthn-json does,
+  // in strict-mode code), which a native credential allows since its toJSON lives on the prototype.
   const mk = (proto, props) => {
     const o = Object.create(proto);
-    for (const k of Object.keys(props)) Object.defineProperty(o, k, { value: props[k], enumerable: true, configurable: true });
+    for (const k of Object.keys(props)) Object.defineProperty(o, k, { value: props[k], enumerable: true, configurable: true, writable: true });
     return o;
   };
   const cred = (list) => (Array.isArray(list) ? list.map((c) => ({ type: c && c.type, id: b64u(c && c.id), transports: c && Array.isArray(c.transports) ? c.transports.map(String) : undefined })).filter((c) => c.id) : []);
@@ -112,7 +114,7 @@ export function installWebAuthnShim(bridge) {
     return withAbort(
       options.signal,
       bridge.create(JSON.stringify({ ...req, requestId: id })).then((r) => {
-        if (r && r.fallback) return origCreate(options);
+        if (r && r.fallback) return whenFocused().then(() => origCreate(options));
         if (!r || r.error) return fail(r || {});
         return buildCreate(r);
       }),
@@ -139,13 +141,29 @@ export function installWebAuthnShim(bridge) {
         // Electron has no autofill UI for a conditional request: the platform would answer it with its modal
         // passkey dialog as the page loads (Google's sign-in asks on every visit). Chrome keeps the request
         // open while it has nothing to offer, until the page aborts it; so does this.
-        if (r && r.fallback) return conditional ? new Promise(() => {}) : origGet(options);
+        if (r && r.fallback) return conditional ? new Promise(() => {}) : whenFocused().then(() => origGet(options));
         if (!r || r.error) return fail(r || {});
         return buildGet(r);
       }),
       () => bridge.cancel(id),
     );
   };
+
+  // The platform refuses a request from a page without focus, which it may still lack for a moment after the
+  // browser's own passkey dialog closes ("Use another device or key").
+  const doc = window.document;
+  const whenFocused = () =>
+    !doc || typeof window.addEventListener !== 'function' || doc.hasFocus()
+      ? Promise.resolve()
+      : new Promise((resolve) => {
+          const done = () => {
+            window.removeEventListener('focus', done);
+            clearTimeout(t);
+            resolve();
+          };
+          const t = setTimeout(done, 2000);
+          window.addEventListener('focus', done);
+        });
 
   const def = (obj, name, fn) => Object.defineProperty(obj, name, { value: fn, configurable: true, writable: true, enumerable: false });
   def(C, 'create', create);

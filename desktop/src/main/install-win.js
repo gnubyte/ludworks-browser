@@ -1,5 +1,7 @@
 // Windows integration, run by the installer (--ludworks-integrate) and by "Uninstall" in
 // Settings → Apps (--ludworks-uninstall). Per-user only (HKCU): no administrator rights needed.
+// The MSI (packaging/windows) integrates with --msi (no uninstall entry of our own: Windows Installer
+// has one) and undoes it with --ludworks-unintegrate before removing the files itself.
 //
 // Registers the browser like Chrome does: ProgIDs for documents and URLs (with --single-argument so
 // a crafted URL can never inject command-line switches), StartMenuInternet + Capabilities +
@@ -50,7 +52,7 @@ function shortcutPaths() {
   return { startMenu, desktop };
 }
 
-export async function integrate({ desktopShortcut = true } = {}) {
+export async function integrate({ desktopShortcut = true, uninstallEntry = true } = {}) {
   const exe = process.execPath;
   const dir = path.dirname(exe);
   const icon = `${exe},0`;
@@ -79,7 +81,17 @@ export async function integrate({ desktopShortcut = true } = {}) {
   for (const ext of FILE_TYPES) await set(`HKCU\\Software\\Classes\\${ext}\\OpenWithProgids`, PROGID_HTML, '', 'REG_NONE').catch(() => {});
   await set(`HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${path.basename(exe)}`, null, exe);
   await set(`HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${path.basename(exe)}`, 'Path', dir);
-  // Uninstall entry (Settings → Apps)
+  // Uninstall entry (Settings → Apps): not for an MSI install, which Windows Installer lists itself
+  if (uninstallEntry) await setUninstallEntry(exe, dir, icon);
+  else await del(UNINSTALL_KEY); // a setup .exe install this MSI replaced
+  // Shortcuts
+  const { startMenu, desktop } = shortcutPaths();
+  const lnk = { target: exe, cwd: dir, description: APP_NAME, icon: exe, iconIndex: 0, appUserModelId: APP_USER_MODEL_ID };
+  shell.writeShortcutLink(startMenu, existsSync(startMenu) ? 'replace' : 'create', lnk);
+  if (desktopShortcut) shell.writeShortcutLink(desktop, existsSync(desktop) ? 'replace' : 'create', lnk);
+}
+
+async function setUninstallEntry(exe, dir, icon) {
   await set(UNINSTALL_KEY, 'DisplayName', APP_NAME);
   await set(UNINSTALL_KEY, 'DisplayIcon', icon);
   await set(UNINSTALL_KEY, 'DisplayVersion', app.getVersion());
@@ -91,11 +103,6 @@ export async function integrate({ desktopShortcut = true } = {}) {
   await set(UNINSTALL_KEY, 'NoRepair', 1, 'REG_DWORD');
   await set(UNINSTALL_KEY, 'EstimatedSize', dirSizeKb(dir), 'REG_DWORD');
   await set(UNINSTALL_KEY, 'InstallDate', new Date().toISOString().slice(0, 10).replace(/-/g, ''));
-  // Shortcuts
-  const { startMenu, desktop } = shortcutPaths();
-  const lnk = { target: exe, cwd: dir, description: APP_NAME, icon: exe, iconIndex: 0, appUserModelId: APP_USER_MODEL_ID };
-  shell.writeShortcutLink(startMenu, existsSync(startMenu) ? 'replace' : 'create', lnk);
-  if (desktopShortcut) shell.writeShortcutLink(desktop, existsSync(desktop) ? 'replace' : 'create', lnk);
 }
 
 export async function unintegrate() {
@@ -115,7 +122,11 @@ export async function unintegrate() {
 export async function handleInstallerArgs(argv) {
   if (process.platform !== 'win32') return false;
   if (argv.includes('--ludworks-integrate')) {
-    await integrate({ desktopShortcut: !argv.includes('--no-desktop-shortcut') });
+    await integrate({ desktopShortcut: !argv.includes('--no-desktop-shortcut'), uninstallEntry: !argv.includes('--msi') });
+    return true;
+  }
+  if (argv.includes('--ludworks-unintegrate')) {
+    await unintegrate();
     return true;
   }
   if (argv.includes('--ludworks-uninstall')) {

@@ -39,9 +39,32 @@ html, body { background: var(--frame); overflow: hidden; user-select: none; }
 .tab.narrow .title, .tab.narrow .audio { display: none; }
 .tab.narrow:not(.active) .close { display: none; }
 .tab.crashed .title { color: var(--danger); }
-.tab.dragging { opacity: 0.6; }
-/* where a dragged tab lands (this strip's own tabs, or one dragged in from another window) */
-#tab-drop { position: absolute; top: 9px; bottom: 5px; width: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; z-index: 3; }
+/* Dragging a tab (shell.js dragAlongStrip): the tab itself is the ghost under the cursor, lifted with a soft
+   glow; its neighbours slide aside to show where it lands. */
+#tabs.reordering .tab { transition: transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1), background-color 120ms; }
+#tabs.reordering .tab:not(.dragging)::after { display: none; }
+.tab.dragging, #tabs.reordering .tab.dragging {
+  z-index: 5; transition: none; cursor: grabbing; color: var(--text); border-radius: 10px; height: 32px; margin-bottom: 2px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--toolbar));
+  box-shadow: 0 0 0 1.5px var(--accent), 0 6px 18px -2px color-mix(in srgb, var(--accent) 55%, transparent), 0 0 22px 4px color-mix(in srgb, var(--accent) 30%, transparent);
+  animation: tab-fuzz 1.4s ease-in-out infinite;
+}
+.tab.dragging::before, .tab.dragging > .curve-r, .tab.dragging::after { display: none; }
+.tab.settling { transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1) !important; z-index: 4; }
+@keyframes tab-fuzz {
+  50% { box-shadow: 0 0 0 1.5px var(--accent), 0 6px 22px 0 color-mix(in srgb, var(--accent) 65%, transparent), 0 0 30px 8px color-mix(in srgb, var(--accent) 38%, transparent); }
+}
+/* the slot a tab dragged in from another window would take */
+#tab-drop {
+  position: absolute; top: 6px; height: 30px; border-radius: 10px; pointer-events: none; z-index: 3;
+  background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1.5px dashed var(--accent);
+  box-shadow: 0 0 18px 3px color-mix(in srgb, var(--accent) 35%, transparent); animation: tab-slot 1.2s ease-in-out infinite;
+}
+@keyframes tab-slot { 50% { box-shadow: 0 0 26px 6px color-mix(in srgb, var(--accent) 45%, transparent); } }
+@media (prefers-reduced-motion: reduce) {
+  .tab.dragging, #tab-drop { animation: none; }
+  #tabs.reordering .tab, .tab.settling { transition: none !important; }
+}
 .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 0.8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -70,8 +93,33 @@ html, body { background: var(--frame); overflow: hidden; user-select: none; }
 .account-btn .avatar.locked { background: var(--surface-2); color: var(--muted); box-shadow: inset 0 0 0 1.5px var(--accent); }
 #downloads { position: relative; }
 #downloads .ring { position: absolute; inset: 3px; border-radius: 50%; pointer-events: none; }
-#downloads.pulse { animation: pulse 0.9s ease-out 2; }
-@keyframes pulse { 50% { background: var(--accent-soft); color: var(--accent); } }
+/* shell.js download-started / download-finished */
+#downloads.dl-pop { animation: dl-pop 520ms cubic-bezier(0.3, 1.6, 0.5, 1); }
+@keyframes dl-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.32); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 6px var(--accent-soft); }
+  100% { transform: scale(1); }
+}
+/* bounce, wait, bounce once more */
+#downloads.dl-bounce { animation: dl-bounce 1900ms ease-out; color: var(--ok); }
+@keyframes dl-bounce {
+  0%, 22%, 58%, 82%, 100% { transform: translateY(0); }
+  9% { transform: translateY(-9px); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+  15% { transform: translateY(0); }
+  18% { transform: translateY(-3px); }
+  67% { transform: translateY(-9px); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+  74% { transform: translateY(0); }
+  78% { transform: translateY(-3px); }
+}
+#downloads.dl-failed { animation: dl-shake 500ms ease-in-out; color: var(--danger); }
+@keyframes dl-shake { 20%, 60% { transform: translateX(-3px); } 40%, 80% { transform: translateX(3px); } }
+#downloads .dl-count {
+  position: absolute; right: -1px; top: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent);
+  color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums;
+  pointer-events: none; box-shadow: 0 0 0 2px var(--toolbar);
+}
+#downloads .dl-count.done { background: var(--ok); }
+@media (prefers-reduced-motion: reduce) { #downloads.dl-pop, #downloads.dl-bounce, #downloads.dl-failed { animation-duration: 1ms; } }
 .badge { position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 
 /* Feature buttons (content blocker, tracking cookies, clear history): icon + small count badge. */
@@ -132,3 +180,56 @@ html, body { background: var(--frame); overflow: hidden; user-select: none; }
 #agent-bar .agent-btn:hover { background: rgba(255, 255, 255, 0.18); }
 :root[data-agent-busy="true"] #agent-bar { animation: agent-glow 1.6s ease-in-out infinite; }
 .tab.agent::after { display: block; content: ""; position: absolute; left: 8px; right: 8px; top: auto; bottom: 0; height: 2px; width: auto; border-radius: 2px; background: var(--agent); }
+
+/* A user's page controlled by an AI app (shell.js renderControl): the window's frame around the page glows */
+:root { --control: #7c3aed; --control-2: #ec4899; --control-3: #f59e0b; }
+:root:not([data-control="false"]):not([data-agent="true"]) #chrome { background: var(--frame); }
+:root[data-control="on"], :root[data-control="on"] body, :root[data-control="busy"], :root[data-control="busy"] body, :root[data-control="waiting"], :root[data-control="waiting"] body {
+  background: linear-gradient(115deg, var(--control), var(--control-2), var(--control-3), var(--control-2), var(--control));
+  background-size: 300% 300%; animation: control-flow 5s linear infinite;
+}
+:root[data-control="busy"], :root[data-control="busy"] body { animation-duration: 1.6s; }
+:root[data-control="waiting"], :root[data-control="waiting"] body { animation: control-flow 5s linear infinite, control-breathe 1.8s ease-in-out infinite; }
+@keyframes control-flow { from { background-position: 0% 50%; } to { background-position: 300% 50%; } }
+@keyframes control-breathe { 50% { filter: saturate(0.4) brightness(1.15); } }
+#control-bar {
+  display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 12px; color: #fff; font-size: 12.5px; font-weight: 600;
+  background: linear-gradient(90deg, var(--control), var(--control-2)); -webkit-app-region: no-drag;
+}
+#control-bar .grow { flex: 1; }
+#control-bar .cb-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); animation: cb-ping 1.4s ease-out infinite; }
+#control-bar .agent-btn { height: 22px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.6); background: transparent; color: #fff; font: inherit; font-weight: 500; cursor: pointer; }
+#control-bar .agent-btn:hover { background: rgba(255, 255, 255, 0.18); }
+@keyframes cb-ping { 70% { box-shadow: 0 0 0 7px rgba(255, 255, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); } }
+@media (prefers-reduced-motion: reduce) { :root, :root body, #control-bar .cb-dot { animation: none !important; } }
+
+/* A Chrome theme (shell.js renderChromeTheme): its colours replace the base ones; theme_frame tiles from the
+   window's top left behind the tab strip, theme_toolbar behind the toolbar, the active tab and the bookmarks bar
+   (fixed to the window, so the three line up as in Chrome). */
+:root[data-chrome-theme], :root[data-chrome-theme] body {
+  background-color: var(--frame); background-image: var(--theme-frame-overlay-img, none), var(--theme-frame-img, none);
+  background-repeat: no-repeat, repeat-x; background-position: left top, left top;
+}
+:root[data-chrome-theme][data-inactive="true"], :root[data-chrome-theme][data-inactive="true"] body {
+  background-color: var(--frame-inactive); background-image: var(--theme-frame-inactive-img, var(--theme-frame-img, none));
+  background-repeat: repeat-x; background-position: left top;
+}
+:root[data-chrome-theme] #toolbar, :root[data-chrome-theme] #bookmarks-bar, :root[data-chrome-theme] .tab.active, :root[data-chrome-theme] #findbar {
+  background-color: var(--toolbar); background-image: var(--theme-toolbar-img, none); background-attachment: fixed; background-position: left top;
+}
+:root[data-chrome-theme] .tab { color: var(--frame-text); }
+:root[data-chrome-theme] .tab.active { color: var(--tab-text); }
+:root[data-chrome-theme] .tab .close { color: inherit; }
+:root[data-chrome-theme] #newtab { color: var(--frame-text); }
+:root[data-chrome-theme] #toolbar .icon-btn:not(.on):not([class*="tone-"]) { color: var(--icon); }
+:root[data-chrome-theme] #url { color: var(--omni-text); }
+:root[data-chrome-theme] #bookmarks-bar .bm, :root[data-chrome-theme] #bookmarks-bar .empty { color: var(--bookmark-text); }
+:root[data-chrome-theme] .tab:hover:not(.active) { background: color-mix(in srgb, var(--frame-text) 12%, transparent); }
+
+/* The password manager badge (shell.js renderToolbar) */
+#vault { position: relative; }
+#vault.locked { color: var(--faint); }
+#vault .vault-count {
+  position: absolute; right: 0; bottom: 1px; min-width: 15px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--accent);
+  color: var(--on-accent); font-size: 9.5px; font-weight: 700; line-height: 14px; text-align: center; pointer-events: none; box-shadow: 0 0 0 1.5px var(--toolbar);
+}

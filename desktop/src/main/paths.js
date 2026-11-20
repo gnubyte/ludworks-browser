@@ -40,3 +40,11 @@ export function downloadsDir() {
     return path.join(os.homedir(), 'Downloads');
   }
 }
+
+/** True for the default profile directory or a folder inside it (they hold the user's sign-ins). */
+export function inDefaultProfile(dir) {
+  const norm = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+  const d = norm(dir);
+  const def = norm(defaultProfileDir());
+  return d === def || d.startsWith(def + path.sep);
+}

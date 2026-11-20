@@ -11,11 +11,15 @@ import { log } from './util/log.js';
 const SHELL_URL = 'lwshell://ui/shell.html';
 const OVERLAY_URL = 'lwshell://ui/overlay.html';
 const PANEL_URL = 'lwshell://ui/panel.html';
+const FX_URL = 'lwshell://ui/fx.html';
+const FLY_MS = 950; // src/shell/fx.js FLY_MS
 const TITLEBAR_HEIGHT = 40;
 // Transparent margin around popup cards in the overlay view (src/shell/overlay.css #root padding).
 const OVERLAY_PAD = { x: 18, top: 4, bottom: 30 };
 // An AI agent's window: the page sits inside a coloured frame the shell draws (src/shell/shell.css .agent).
 const AGENT_FRAME = 3;
+// A page of the user's that an AI agent controls (agent.js controlOf): a wider glowing frame around it.
+const CONTROL_FRAME = 6;
 
 export class WindowCtl extends EventEmitter {
   /**
@@ -41,8 +45,7 @@ export class WindowCtl extends EventEmitter {
     this.popup = null; // {kind, anchor}
     this.pendingPrompts = new Map(); // id → resolve
     this.destroyed = false;
-    const dark = this.isDark();
-    const t = THEME[dark ? 'dark' : 'light'];
+    const t = this.frameColors();
     const b = bounds || defaultBounds();
     this.win = new BrowserWindow({
       ...b,
@@ -50,7 +53,7 @@ export class WindowCtl extends EventEmitter {
       minHeight: 360,
       show: false,
       title: isPrivate ? 'Private — Ludworks Browser' : 'Ludworks Browser',
-      backgroundColor: isPrivate ? THEME.private.frame : t.frame,
+      backgroundColor: t.frame,
       icon: browser.paths.windowIcon || undefined,
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
       ...(process.platform === 'darwin'
@@ -73,6 +76,11 @@ export class WindowCtl extends EventEmitter {
     this.shell.setWindowOpenHandler(() => ({ action: 'deny' }));
     this.shell.on('will-navigate', (e) => e.preventDefault());
     this.shell.on('page-title-updated', (e) => e.preventDefault()); // the window title follows the active tab
+    // Who had the keyboard last (shell or page), for views that take it without asking (keepFocus).
+    this.lastFocus = 'page';
+    this.shell.on('focus', () => (this.lastFocus = 'shell'));
+    // The popup view, made once the window has settled rather than on the first popup (no delay then).
+    this.shell.once('did-finish-load', () => setTimeout(() => !this.destroyed && this.ensureOverlay(), 1500));
     this.shell.loadURL(SHELL_URL);
     this.win.once('ready-to-show', () => (this.showInactive ? this.win.showInactive() : this.win.show()));
 
@@ -107,8 +115,16 @@ export class WindowCtl extends EventEmitter {
     return pref === 'dark' || (pref === 'system' && nativeTheme.shouldUseDarkColors);
   }
 
+  /** The window frame's colour and its caption buttons' (a Chrome theme's, src/main/themes). */
+  frameColors() {
+    if (this.private) return THEME.private;
+    const ct = this.browser.themes && this.browser.themes.forWindow(this);
+    if (ct) return { frame: ct.frameColor, text: ct.frameTextColor };
+    return THEME[this.isDark() ? 'dark' : 'light'];
+  }
+
   applyTheme() {
-    const t = this.private ? THEME.private : THEME[this.isDark() ? 'dark' : 'light'];
+    const t = this.frameColors();
     this.win.setBackgroundColor(t.frame);
     if (process.platform !== 'darwin') {
       try {
@@ -123,7 +139,10 @@ export class WindowCtl extends EventEmitter {
   }
 
   themeName() {
-    return this.private ? 'private' : this.isDark() ? 'dark' : 'light';
+    if (this.private) return 'private';
+    const ct = this.browser.themes && this.browser.themes.forWindow(this);
+    if (ct) return ct.base;
+    return this.isDark() ? 'dark' : 'light';
   }
 
   // ------------------------------------------------------------------------------------ tabs
@@ -138,7 +157,8 @@ export class WindowCtl extends EventEmitter {
   /**
    * @param {{url?: string, active?: boolean, index?: number, opener?: Tab|null, webContents?: Electron.WebContents, pinned?: boolean, typed?: boolean}} o
    */
-  newTab({ url = null, active = true, index = null, opener = null, webContents = null, pinned = false, typed = false } = {}) {
+  /** `lazy`: the page loads when the tab is first shown (restored background tabs); `title` shows until then. */
+  newTab({ url = null, active = true, index = null, opener = null, webContents = null, pinned = false, typed = false, lazy = false, title = '' } = {}) {
     const target = url || (webContents ? null : this.browser.newTabUrl());
     const tab = new Tab({ ctl: this, url: null, webContents, opener, pinned });
     this.browser.onTabCreated(tab);
@@ -155,7 +175,12 @@ export class WindowCtl extends EventEmitter {
     }
     this.tabs.splice(at, 0, tab);
     this.win.contentView.addChildView(tab.view);
-    if (target) tab.load(target, { typed });
+    this.watchFocus(tab);
+    if (target && lazy && !active) {
+      tab.url = target;
+      tab.title = title;
+      tab.pendingLoad = true;
+    } else if (target) tab.load(target, { typed });
     if (active || !this.activeId) this.activate(tab.id);
     else this.layout();
     this.sendState();
@@ -172,6 +197,10 @@ export class WindowCtl extends EventEmitter {
     if (prev && prev !== tab) this.browser.onTabSwitch(this, prev, tab);
     this.activeId = id;
     tab.lastActive = Date.now();
+    if (tab.pendingLoad) {
+      tab.pendingLoad = false;
+      tab.load(tab.url);
+    }
     this.hidePopup();
     this.layout();
     // an agent switching tabs in its window must not pull that window in front of the user's work
@@ -239,6 +268,7 @@ export class WindowCtl extends EventEmitter {
     const at = Number.isInteger(index) ? Math.max(0, Math.min(index, this.tabs.length)) : this.tabs.length;
     this.tabs.splice(at, 0, tab);
     this.win.contentView.addChildView(tab.view);
+    this.watchFocus(tab);
     if (this.overlay && this.popup) this.win.contentView.addChildView(this.overlay); // keep an open popup above the page
     this.activate(tab.id, { focus });
     this.sendState();
@@ -276,7 +306,7 @@ export class WindowCtl extends EventEmitter {
     const [width, height] = this.win.getContentSize();
     const full = this.win.isFullScreen() && this.htmlFullscreenTab;
     const top = full ? 0 : this.topInset;
-    const f = this.agent && !full ? AGENT_FRAME : 0;
+    const f = full ? 0 : this.agent ? AGENT_FRAME : this.controlFramed ? CONTROL_FRAME : 0;
     return { x: f, y: top, width: Math.max(0, width - 2 * f), height: Math.max(0, height - top - f) };
   }
 
@@ -348,6 +378,57 @@ export class WindowCtl extends EventEmitter {
     if (!panel.webContents.isLoading()) panel.webContents.send('panel', this.panelData);
   }
 
+  // ---------------------------------------------------------------------------------- effects
+  /**
+   * A new download flies from the middle of the page into the downloads button at `to` (shell coordinates):
+   * a transparent view over the whole window (src/shell/fx.html), there only while the effect plays.
+   */
+  async flyDownload(to, name) {
+    if (this.destroyed || this.win.isMinimized() || !this.win.isVisible() || this.agent) return;
+    if (!this.fx) {
+      this.fx = new WebContentsView({
+        webPreferences: { preload: this.browser.paths.shellPreload, sandbox: true, contextIsolation: true, partition: 'lwui', spellcheck: false, transparent: true, devTools: this.browser.dev },
+      });
+      this.fx.setBackgroundColor('#00000000');
+      this.fx.setVisible(false);
+      this.fx.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      this.fx.webContents.on('will-navigate', (e) => e.preventDefault());
+      this.fxReady = new Promise((resolve) => this.fx.webContents.once('did-finish-load', resolve));
+      this.fx.webContents.loadURL(FX_URL);
+    }
+    await this.fxReady;
+    if (this.destroyed || this.fx.webContents.isDestroyed()) return;
+    const [width, height] = this.win.getContentSize();
+    const page = this.contentRect();
+    this.fx.setBounds({ x: 0, y: 0, width, height });
+    this.win.contentView.addChildView(this.fx); // topmost
+    this.fx.setVisible(true);
+    this.fx.webContents.send('fly', { from: { x: page.x + page.width / 2, y: page.y + Math.min(page.height / 2, 320) }, to, name: String(name || '').slice(0, 200), theme: this.themeName() });
+    clearTimeout(this.fxTimer);
+    this.fxTimer = setTimeout(() => {
+      if (!this.destroyed && this.fx && !this.fx.webContents.isDestroyed()) this.fx.setVisible(false);
+    }, FLY_MS + 60);
+  }
+
+  watchFocus(tab) {
+    if (tab.focusWatched === this) return;
+    tab.focusWatched = this;
+    tab.wc.on('focus', () => {
+      if (tab.ctl === this) this.lastFocus = 'page';
+    });
+  }
+
+  /** Puts the keyboard back where it was (shell or page) after a view took it without asking. */
+  keepFocus() {
+    if (this.destroyed || (this.popup && this.popup.focus)) return;
+    if (this.lastFocus === 'shell') {
+      if (!this.shell.isDestroyed()) this.shell.focus();
+    } else {
+      const t = this.activeTab();
+      if (t && !t.wc.isDestroyed()) t.wc.focus();
+    }
+  }
+
   // ----------------------------------------------------------------------------------- popups
   ensureOverlay() {
     if (this.overlay) return this.overlay;
@@ -365,6 +446,10 @@ export class WindowCtl extends EventEmitter {
         return;
       }
       this.browser.shortcuts.handle(event, input, this, this.activeTab());
+    });
+    // The engine gives a freshly loaded view the keyboard; a popup that did not ask for it gives it back.
+    this.overlay.webContents.on('focus', () => {
+      if (!(this.popup && this.popup.focus)) setTimeout(() => this.keepFocus(), 0);
     });
     this.overlay.webContents.on('blur', () => {
       if (!this.popup || !this.popup.closeOnBlur) return;
@@ -395,7 +480,7 @@ export class WindowCtl extends EventEmitter {
     await this.overlayReady;
     if (this.destroyed) return;
     const seq = (this.popupSeq = (this.popupSeq || 0) + 1);
-    this.popup = { kind, anchor, width: anchor.width + 2 * OVERLAY_PAD.x, height: anchor.height || 40, closeOnBlur, modal, seq };
+    this.popup = { kind, anchor, width: anchor.width + 2 * OVERLAY_PAD.x, height: anchor.height || 40, closeOnBlur, modal, seq, focus };
     this.win.contentView.addChildView(ov); // topmost
     // The card's room below its anchor (window bottom, see positionOverlay): long lists scroll inside it.
     const ch = this.win.getContentSize()[1];
@@ -479,7 +564,12 @@ export class WindowCtl extends EventEmitter {
       const t = this.activeTab();
       const title = `${this.agent ? `${this.agent.client} · ` : ''}${(t && t.title) || 'New Tab'} - Ludworks Browser${this.private ? ' (Private)' : ''}`;
       if (this.win.getTitle() !== title) this.win.setTitle(title);
-      this.shell.send('state', this.state());
+      const st = this.state();
+      if (!!st.control !== !!this.controlFramed) {
+        this.controlFramed = !!st.control;
+        this.layout();
+      }
+      this.shell.send('state', st);
     }, 16);
   }
 
@@ -487,11 +577,13 @@ export class WindowCtl extends EventEmitter {
     return {
       private: this.private,
       theme: this.themeName(),
+      chromeTheme: this.private || !this.browser.themes ? null : this.browser.themes.shellTheme(),
       platform: process.platform,
       maximized: this.win.isMaximized(),
       fullscreen: this.win.isFullScreen(),
       htmlFullscreen: !!this.htmlFullscreenTab,
       agent: this.agent,
+      control: this.browser.agent && !this.agent ? this.browser.agent.controlOf(this.activeTab()) : null,
       activeId: this.activeId,
       tabs: this.tabs.map((t) => t.snapshot()),
       keyState: this.browser.autofill ? this.browser.autofill.keyStateFor(this.activeTab()) : null,
@@ -508,7 +600,8 @@ export class WindowCtl extends EventEmitter {
     this.tabs = [];
     for (const r of this.pendingPrompts.values()) r(null);
     this.pendingPrompts.clear();
-    for (const v of [this.overlay, this.panel]) {
+    clearTimeout(this.fxTimer);
+    for (const v of [this.overlay, this.panel, this.fx]) {
       try {
         if (v && !v.webContents.isDestroyed()) v.webContents.close();
       } catch (e) {

@@ -27,6 +27,7 @@ function fakeWin({ x = 0, y = 0, width = 1000, height = 700, frame = { x: 0, y: 
     isFullScreen: () => false,
     isMaximized: () => w.maximized,
     unmaximize: () => (w.maximized = false),
+    maximize: () => (w.maximized = true),
     focus: () => w.focused++,
   };
   return w;
@@ -248,4 +249,39 @@ test('cleanStrip: keeps well-formed tab rectangles only', () => {
   assert.equal(cleanStrip({ tabs: [] }), null);
   assert.deepEqual(cleanStrip({ tabs: [{ id: 1, left: 8, right: 108, x: 'junk' }, { id: 'a', left: 0, right: 1 }, { id: 2, left: NaN, right: 3 }], bottom: 40 }), { tabs: [{ id: 1, left: 8, right: 108 }], bottom: 40 });
   assert.equal(cleanStrip({ tabs: [], bottom: 9999 }).bottom, 400);
+});
+
+// ------------------------------------------------------------------------------------- snapping
+import { snapZone } from '../build/app/main/tab-drag.js';
+
+test('snapZone: top edge fills the work area, side edges take half, elsewhere nothing', () => {
+  const d = { bounds: { x: 1920, y: 0, width: 2560, height: 1440 }, workArea: { x: 1920, y: 0, width: 2560, height: 1392 } };
+  assert.deepEqual(snapZone({ x: 3000, y: 0 }, d), { zone: 'max', rect: { x: 1920, y: 0, width: 2560, height: 1392 } });
+  assert.deepEqual(snapZone({ x: 3000, y: -3 }, d), { zone: 'max', rect: { x: 1920, y: 0, width: 2560, height: 1392 } });
+  assert.deepEqual(snapZone({ x: 1921, y: 700 }, d), { zone: 'left', rect: { x: 1920, y: 0, width: 1280, height: 1392 } });
+  assert.deepEqual(snapZone({ x: 4479, y: 700 }, d), { zone: 'right', rect: { x: 3200, y: 0, width: 1280, height: 1392 } });
+  assert.equal(snapZone({ x: 3000, y: 700 }, d), null);
+  assert.equal(snapZone({ x: 100, y: 0 }, d), null); // another screen
+  assert.equal(snapZone({ x: 3000, y: 0 }, null), null);
+});
+
+test('tab drag: dropped against a screen top edge the window maximizes there, with an outline shown first', () => {
+  const b = fakeBrowser();
+  let cursor = { x: 0, y: 0 };
+  const shown = [];
+  const preview = { show: (r) => shown.push(r), hide: () => shown.push('hide'), dispose: () => shown.push('dispose') };
+  const display = { bounds: { x: 0, y: 0, width: 1920, height: 1080 }, workArea: { x: 0, y: 0, width: 1920, height: 1040 } };
+  const drag = new TabDrag(b, () => cursor, { displayAt: () => display, preview });
+  const [t1, t2] = [fakeTab(), fakeTab()];
+  const src = fakeCtl(b, [t1, t2], { x: 100, y: 100, width: 1200, height: 800 });
+  cursor = { x: 900, y: 500 };
+  assert.ok(drag.start(src, t2, { x: 40, y: 20 }));
+  const win = t2.ctl;
+  cursor = { x: 900, y: 0 };
+  drag.move();
+  assert.deepEqual(shown[0], display.workArea);
+  drag.end();
+  assert.equal(shown.at(-1), 'dispose');
+  assert.deepEqual(win.win.getBounds(), display.workArea);
+  assert.ok(win.win.maximized);
 });

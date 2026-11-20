@@ -6,6 +6,7 @@ const q = document.getElementById('q');
 async function load() {
   const d = await window.lwPage.call('newtab.data');
   applyTheme(d.theme);
+  chromeTheme(d.chromeTheme);
   q.placeholder = `Search ${d.engine} or type a URL`;
   if (d.private) {
     document.body.classList.add('private');
@@ -33,6 +34,25 @@ async function load() {
   } else lw.hidden = true;
 }
 
+/** A Chrome theme's new tab page: background colour and image (aligned and repeated as it says), text colours. */
+function chromeTheme(t) {
+  const s = document.documentElement.style;
+  document.body.classList.toggle('themed', !!t);
+  for (const k of ['--ntp-bg', '--ntp-text', '--ntp-link', '--ntp-img', '--ntp-pos', '--ntp-repeat', '--ntp-attr']) s.removeProperty(k);
+  if (!t) return;
+  for (const k of ['--ntp-bg', '--ntp-text', '--ntp-link']) if (t.vars[k]) s.setProperty(k, t.vars[k]);
+  const url = (u) => `url("${String(u).replace(/["\\]/g, '')}")`;
+  if (t.images.ntpBackground) {
+    s.setProperty('--ntp-img', url(t.images.ntpBackground));
+    s.setProperty('--ntp-pos', t.ntp.position);
+    s.setProperty('--ntp-repeat', t.ntp.repeat);
+  }
+  if (t.images.ntpAttribution) s.setProperty('--ntp-attr', url(t.images.ntpAttribution));
+}
+window.lwPage.on('page-event', (ev) => {
+  if (ev && ev.type === 'theme') load();
+});
+
 document.getElementById('search').addEventListener('submit', (e) => {
   e.preventDefault();
   const text = q.value.trim();
@@ -40,4 +60,4 @@ document.getElementById('search').addEventListener('submit', (e) => {
 });
 
 load();
-setTimeout(() => q.focus(), 0);
+// The keyboard starts in the address bar (Browser.newTabWithOmnibox); this search box takes it on a click.

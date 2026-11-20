@@ -288,3 +288,28 @@ test('fills from the dropdown go to the frame that asked; TOTP codes are generat
   assert.equal(p.password, 'pw-a');
   assert.equal(tab.ctl.popup, null, 'the dropdown closes when a login is picked');
 });
+
+test('password badge: the whole vault is searchable; a login of another site fills only once the user confirmed', async () => {
+  const logins = [login('a', 'https://example.com', 'alice'), login('g', 'https://github.com', 'octo', { totp: 'JBSWY3DPEHPK3PXP' }), login('b', 'https://bank.test', 'bob')];
+  const { af, tab, mainFrame, shows } = setup({ url: 'https://example.com/login', logins });
+  await af.openKeyBubble(tab.ctl, { x: 900, y: 70, width: 380 }, { browse: true });
+  assert.equal(shows().at(-1)[2].browse, true);
+  assert.deepEqual(shows().at(-1)[2].items.map((i) => i.id), ['a'], 'this site first');
+  const r = await af.popupAction(tab.ctl, 'key', 'search', { q: 'GIT' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.value.items.map((i) => [i.id, i.site, i.otherSite, i.totp]), [['g', 'github.com', true, true]]);
+  assert.deepEqual((await af.popupAction(tab.ctl, 'key', 'search', { q: 'o' })).value.items.map((i) => i.id), ['a', 'b', 'g'], 'this site’s logins before the others');
+  assert.deepEqual((await af.popupAction(tab.ctl, 'key', 'search', { q: '' })).value.items, []);
+  // another site's login: refused unless confirmed, then filled under this page's origin
+  const refused = await af.popupAction(tab.ctl, 'key', 'fill', { id: 'g' });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error.message, /not saved for this website/);
+  const ok = await af.popupAction(tab.ctl, 'key', 'fill', { id: 'g', allowAnySite: true });
+  assert.deepEqual(ok, { ok: true });
+  const [ch, p] = mainFrame.sent.at(-1);
+  assert.equal(ch, 'lw-fill');
+  assert.equal(p.username, 'octo');
+  assert.deepEqual(p.uris, [{ uri: 'https://example.com', match: 'host' }]);
+  // the autofill dropdown can never fill another site's login
+  assert.equal((await af.popupAction(tab.ctl, 'fill', 'fill', { id: 'g', allowAnySite: true })).ok, false);
+});

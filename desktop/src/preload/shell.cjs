@@ -12,6 +12,8 @@ const CHANNELS = new Set([
   'open-tab-search',
   'zoom-bubble',
   'download-started',
+  'download-finished',
+  'fly', // fx.html: the download flyover
   'suggestions-closed',
   'popup',
   'popup-data',

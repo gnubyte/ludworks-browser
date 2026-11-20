@@ -23,6 +23,7 @@ import * as I from './installer.js';
 import { storeItemId, storePageUrl, updateCheckUrl, parseUpdateResponse, compareVersions, trustedCodebase, STORE_ORIGIN } from './webstore.js';
 import { idFromManifestKey, isExtensionId } from './crx.js';
 import { dirSize, cleanTemp } from './unpack.js';
+import { isThemeManifest } from '../themes/chrome-theme.js';
 
 const META = 'extensions';
 const STATE = 'extension_state:';
@@ -419,6 +420,7 @@ export class Extensions {
         this.busy.delete(id);
         this.refreshToolbar();
       }
+      if (isThemeManifest(pkg.manifest)) return this.installTheme(ctl, pkg, 'webstore', { quiet });
       const existing = this.items.get(id);
       if (existing && existing.version === pkg.manifest.version && this.loaded.has(id)) return { ok: true, id, already: true };
       if (!(await this.confirmInstall(ctl, pkg, existing ? 'update' : 'install'))) return { ok: false, cancelled: true };
@@ -433,6 +435,18 @@ export class Extensions {
     })().finally(() => this.installing.delete(id));
     this.installing.set(id, p);
     return p;
+  }
+
+  /** A theme package goes to the themes feature (src/main/themes): shown at once, no permission prompt (as in Chrome). */
+  installTheme(ctl, pkg, source, { quiet = false } = {}) {
+    try {
+      const t = this.b.themes.install(pkg, { source });
+      return { ok: true, id: pkg.id, theme: t.name };
+    } catch (e) {
+      log.warn('extensions: theme install failed', { id: pkg.id, message: e.message });
+      if (!quiet) this.showError(ctl, 'Could not add the theme', e.message);
+      return { ok: false, error: e.message };
+    }
   }
 
   afterInstall(ctl, id) {
@@ -460,6 +474,7 @@ export class Extensions {
     } catch (e) {
       return { ok: false, error: e.message };
     }
+    if (isThemeManifest(pkg.manifest)) return this.installTheme(ctl, pkg, 'file', { quiet: true });
     if (!(await this.confirmInstall(ctl, pkg, this.items.has(pkg.id) ? 'update' : 'install'))) return { ok: false, cancelled: true };
     try {
       await this.installPackage(pkg, { source: buf.toString('latin1', 0, 4) === 'Cr24' ? 'crx' : 'zip' });
@@ -476,6 +491,10 @@ export class Extensions {
       pkg = I.readFolder(src);
     } catch (e) {
       return { ok: false, error: e.message };
+    }
+    if (isThemeManifest(pkg.manifest)) {
+      const key = pkg.key || generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
+      return this.installTheme(null, { ...pkg, id: idFromManifestKey(key) }, 'unpacked', { quiet: true });
     }
     const same = [...this.items.values()].find((it) => it.source === 'unpacked' && it.path && path.resolve(it.path).toLowerCase() === path.resolve(src).toLowerCase());
     let key = pkg.key;

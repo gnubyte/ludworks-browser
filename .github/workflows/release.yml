@@ -1,14 +1,17 @@
-# Release pipeline: push a tag vX.Y.Z (matching "version" in package.json) to build and publish
+# Release pipeline. Every push to main is released automatically: the next version is the latest vX.Y.Z tag
+# with its patch number raised (or package.json's version when that is higher — edit it to start a new minor
+# or major), the packages are built with that version, and the release creates the tag on the pushed commit.
+# Pushing a tag vX.Y.Z yourself releases that version; "Run workflow" releases main on demand.
 #
 #   ludworks-passwords-chrome-<v>.zip, ludworks-passwords-firefox-<v>.zip   (the extension)
-#   LudworksBrowserSetup-<v>-win-x64.exe                                    (Ludworks Browser, Windows)
+#   LudworksBrowserSetup-<v>-win-x64.exe                                    (Ludworks Browser, Windows, setup)
+#   LudworksBrowser-<v>-win-x64.msi                                         (Ludworks Browser, Windows, MSI)
 #   ludworks-browser_<v>_amd64.deb / _arm64.deb, ludworks-browser-<v>-linux-*.tar.gz
 #   Ludworks-Browser-<v>-mac-arm64.dmg / -mac-x64.dmg
 #   SHA256SUMS
 #
-# to the GitHub Release of that tag. The browser packages come from desktop.yml (called as a reusable
-# workflow), so a release is built exactly like CI. A push to a branch that changes this file runs
-# everything except the publish job (a dry run).
+# The browser packages come from desktop.yml (called as a reusable workflow), so a release is built exactly
+# like CI.
 #
 # Same rules as the server's release.yml: actions pinned to commit SHAs, only the publish job can write,
 # and it never replaces an existing release. Build-provenance attestations need a public repository (or
@@ -19,19 +22,20 @@ name: Release
 on:
   push:
     tags: ['v*']
-    branches: ['**']
-    paths: ['.github/workflows/release.yml'] # branch pushes only; tag pushes always run
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  # one release at a time, in push order, so each picks the next free version
+  group: release
   cancel-in-progress: false
 
 jobs:
   version:
-    name: Check the version
+    name: Pick the version
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -40,14 +44,33 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Tag matches package.json
+          fetch-depth: 0 # the tags
+      - name: Version from the tag, or the next one after the latest tag
         id: version
         run: |
-          version="$(node -p "require('./package.json').version")"
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "v${version}" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version ${version}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+            if [ -z "$latest" ]; then
+              version="$pkg"
+            else
+              IFS=. read -r major minor patch <<< "$latest"
+              version="${major}.${minor}.$((patch + 1))"
+              # package.json ahead of the tags (a new minor or major was started there): that version
+              if [ "$(printf '%s\n%s\n' "$version" "$pkg" | sort -V | tail -1)" = "$pkg" ] && [ "$pkg" != "$latest" ]; then version="$pkg"; fi
+            fi
+          fi
+          if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::Not a release version: $version"
             exit 1
           fi
+          if git rev-parse -q --verify "refs/tags/v${version}" > /dev/null && [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "::error::v${version} is already tagged"
+            exit 1
+          fi
+          echo "Releasing ${version} (package.json ${pkg})"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   extension:
@@ -63,6 +86,10 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
+      - name: Stamp the release version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));p.version=process.env.VERSION;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
       - name: Test and build both browsers
         run: |
           node .github/check-supply-chain.mjs
@@ -80,11 +107,12 @@ jobs:
     name: Ludworks Browser
     needs: version
     uses: ./.github/workflows/desktop.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
 
   publish:
     name: Publish the GitHub release
     needs: [version, extension, browser]
-    if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release
@@ -95,7 +123,7 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ github.ref_name }}
+      TAG: v${{ needs.version.outputs.version }}
     steps:
       - name: Never replace an existing release
         run: |
@@ -132,6 +160,7 @@ jobs:
           | File | For |
           |---|---|
           | \`LudworksBrowserSetup-${VERSION}-win-x64.exe\` | Windows 10/11, per-user install (no admin needed) |
+          | \`LudworksBrowser-${VERSION}-win-x64.msi\` | Windows 10/11, the same per-user install as an MSI (Intune, GPO, winget) |
           | \`Ludworks-Browser-${VERSION}-mac-arm64.dmg\` / \`-mac-x64.dmg\` | macOS 12+ (Apple silicon / Intel) |
           | \`ludworks-browser_${VERSION}_amd64.deb\` / \`_arm64.deb\` | Debian 12+ / Ubuntu 22.04+: \`sudo apt install ./ludworks-browser_${VERSION}_amd64.deb\` |
           | \`ludworks-browser-${VERSION}-linux-*.tar.gz\` | Other Linux distributions |
@@ -144,5 +173,7 @@ jobs:
           \`SHA256SUMS\` detects damaged downloads; it is not a signature. The installers are not code-signed yet,
           so Windows SmartScreen and macOS Gatekeeper warn on first launch (macOS: right-click → Open).
           EOF
-          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+          # a pushed tag is released as it is; otherwise the release tags the commit it was built from
+          if [ "$GITHUB_REF_TYPE" = tag ]; then where=(--verify-tag); else where=(--target "$GITHUB_SHA"); fi
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" "${where[@]}" \
             --title "Ludworks Browser and Passwords ${VERSION}" --notes-file notes.md --generate-notes "${prerelease[@]}"

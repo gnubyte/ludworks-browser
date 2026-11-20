@@ -272,7 +272,24 @@ export class Account {
     this.changed();
   }
 
+  /**
+   * A request was refused with 401. The sign-in is dropped only when the server itself confirms it (its own
+   * session check answers 401 with its JSON error): a proxy, captive portal or one bad response must not
+   * delete the account, the remembered key and the vault cache.
+   */
   async sessionExpired() {
+    if (this.acc) {
+      try {
+        await this.api().session();
+        log.warn('a 401 the server does not confirm: still signed in');
+        return; // the session is fine
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 401 && e.code === 'unauthorized')) {
+          log.warn('could not confirm an expired session: keeping the sign-in', { code: e && e.code });
+          return;
+        }
+      }
+    }
     this.wipeLocal();
     this.status.error = { code: 'session_expired', message: 'Your Ludworks session expired or was revoked. Sign in again.' };
     this.changed();

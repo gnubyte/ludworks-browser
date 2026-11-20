@@ -68,6 +68,11 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   permissions, commands, storage.sync and webNavigation; APIs Electron lacks (declarativeNetRequest, blocking
   webRequest, identity, native messaging, side panel, userScripts…) are left undefined and listed per extension.
   Extensions cannot script or open ludworks:// pages and are not loaded in private windows.
+* **Chrome themes** (`src/main/themes/`): any Chrome Web Store theme ("Add to Chrome" on its page), .crx/.zip or
+  unpacked theme folder — its colours, tints (frame, buttons) and images (frame, toolbar, new tab page background and
+  attribution, with the page's alignment and repeat) recolour the tab strip, toolbar, bookmarks bar, window frame and
+  new tab page over a light or dark base picked from the toolbar colour. One at a time, no prompt (as in Chrome);
+  private windows keep their own look; Settings → Appearance shows it and resets to the default.
 * **Picture in picture** (`src/main/pip.js`): toolbar button when the page has a video, Ctrl+Shift+P, right-click a
   video (also inside iframes); optional automatic picture in picture when you switch away from a playing video.
 * **Image and video saver** (`src/main/media/`): toolbar badge counting the page's images and videos; a popup with
@@ -76,6 +81,17 @@ password CSVs. The Android version is the `:browser` module of `ludworks-android
   listed as not saveable.
 * **AI agents** (`src/main/agent/`, `tools/lwb/`): coding agents — Claude Code and any MCP client, Vision through its
   plugins, scripts — use the browser (below).
+* **Send to AI** (`src/main/agent/send.js`, `handoff.js`): a toolbar badge sends the page — its address, or a snapshot
+  (HTML with its CSS/JS/images via "Save page complete", a screenshot, the visible text) — with what you want done to
+  Vision, OpenClaw (its gateway's `/hooks/agent`, token from `~/.openclaw/openclaw.json` or Settings), the Claude app
+  (`claude://claude.ai/new?q=`) or Claude Code (`claude://code/new?q=&folder=`). Snapshots go to
+  `<temp>/Ludworks Browser handoffs` for a week. "Let it control this page" shares the tab with that app's agent
+  (`AgentHub.grantControl`), right away or when it connects; the window then glows around the page and a bar says who
+  is in control, with Stop. Which apps show is chosen at first run or in Settings → AI agents.
+* **Tabs and downloads**: a dragged tab lifts and glows under the cursor while the others slide aside (a tab from
+  another window opens a glowing slot); a new tab puts the keyboard in the address bar; a new download flies from the
+  page into the downloads button (`src/shell/fx.html`, a transparent view shown only while it plays), which counts
+  downloads in progress and bounces twice when one finishes.
 * Main-process warnings and errors are kept in `<profile>/logs/main.log` (1 MB, rotated) — attach it to bug reports.
 
 ## AI agents (Claude Code, Vision, any MCP client)
@@ -119,7 +135,7 @@ window of its own** — framed in violet, labelled "Claude Code is working in th
 ```
 desktop/
   electron.lock.json      pinned engine (castlabs ECS) + SHA-256 per platform
-  build.mjs               stage | fetch | package | installer | linux-packages | all   (Node built-ins only)
+  build.mjs               stage | fetch | package | installer | msi | linux-packages | all   (Node built-ins only)
   src/main/               main process: browser.js (windows, commands, IPC), window.js, tab.js, protocols.js,
                           account/ (sign-in, vault, browser sync, TLS pinning), autofill.js, passkeys.js, cbor.js,
                           import/ (Bitwarden/KeePass/CSV, other browsers), blocker/ (content blocker),
@@ -159,6 +175,24 @@ Run the staged app without packaging: `.cache/electron/<version>/win32-x64/elect
 Browser`, registers Default-apps capabilities, Start menu/desktop shortcuts and an uninstall entry; your profile lives in
 `%LOCALAPPDATA%\Ludworks Browser\User Data`. Re-running a newer installer upgrades in place. `--silent`,
 `--no-desktop-shortcut`, `--no-launch`, `--dir=` are supported. Uninstall from Settings → Apps.
+
+`LudworksBrowser-<v>-win-x64.msi` is the same per-user install as an MSI (Intune, GPO, `msiexec /i … /qn`), built by
+`node desktop/build.mjs msi` with WiX 5 (`dotnet tool install --global wix --version 5.0.2`) from
+`packaging/windows/ludworks-browser.wxs`. The browser registers itself after install (`--ludworks-integrate --msi`,
+no uninstall entry of its own: Windows Installer lists it) and unregisters before removal (`--ludworks-unintegrate`).
+CI installs and uninstalls every MSI on a clean runner.
+
+### Releases
+
+Every push to `main` is released (`.github/workflows/release.yml`): the next version is the latest `vX.Y.Z` tag with
+its patch number raised — or `package.json`'s version when that is higher, to start a new minor or major — and the
+Windows setup .exe and MSI, the Linux .deb/.tar.gz (x64, arm64), the macOS .dmg (arm64, x64) and the extension zips
+are built with it and published as a GitHub Release that tags the commit. Pushing a `vX.Y.Z` tag releases that
+version; "Run workflow" releases `main` on demand.
+
+Started by a packaged (MSIX) app such as Claude, the browser would inherit that app's file virtualization and keep part
+of the profile in `%LOCALAPPDATA%\Packages\<app>\LocalCache`. Such a start hands its link to a running browser, or
+refuses to open the profile and offers a normal start through Explorer (`src/main/package-storage.js`, `main.js`).
 
 ### DRM (Netflix-class services)
 

@@ -4,17 +4,25 @@
 // window's only tab moves the window itself); dropped on another window's tab strip, it joins that window at
 // the marked spot. Tabs only move between windows of the same kind (normal or private, never an AI agent's).
 
+/** @typedef {{x: number, y: number, width: number, height: number}} Rect */
+
 const STRIP_SLOP = 16; // px around a window's tab strip that still count as "on the strip"
+const SNAP_EDGE = 6; // px from a screen's top / left / right edge where a dropped window maximizes or takes half
 const HOVER_OPACITY = 0.6; // the dragged window while it is over a strip it would join, so the drop marker shows
 
 export class TabDrag {
   /**
    * @param {import('./browser.js').Browser} browser
    * @param {() => {x: number, y: number}} cursor screen position of the mouse (DIP)
+   * @param {{displayAt?: (p: {x: number, y: number}) => {bounds: Rect, workArea: Rect}|null,
+   *   preview?: {show: (r: Rect, above: any) => void, hide: () => void, dispose?: () => void}}} [screenOpts]
+   *   the display under a point, and the outline that shows where a dropped window will snap
    */
-  constructor(browser, cursor) {
+  constructor(browser, cursor, { displayAt = () => null, preview = { show() {}, hide() {} } } = {}) {
     this.b = browser;
     this.cursor = cursor;
+    this.displayAt = displayAt;
+    this.preview = preview;
     this.drag = null; // {tab, win, created, grab, target: {ctl, index}|null}
   }
 
@@ -47,6 +55,7 @@ export class TabDrag {
     if (d.win.destroyed || d.win.win.isDestroyed() || d.tab.destroyed) {
       this.drag = null;
       this.setTarget(d, null);
+      if (this.preview.dispose) this.preview.dispose();
       return;
     }
     const p = this.cursor();
@@ -54,7 +63,15 @@ export class TabDrag {
     const b = w.getBounds();
     const c = w.getContentBounds();
     w.setBounds({ x: Math.round(p.x - d.grab.x + b.x - c.x), y: Math.round(p.y - d.grab.y + b.y - c.y), ...d.size });
-    this.setTarget(d, this.targetAt(p, d));
+    const target = this.targetAt(p, d);
+    this.setTarget(d, target);
+    // pushed against a screen's top edge it will fill that screen, against a side edge half of it (as Windows does)
+    const snap = target ? null : snapZone(p, this.displayAt(p));
+    if (JSON.stringify(snap) !== JSON.stringify(d.snap || null)) {
+      d.snap = snap;
+      if (snap) this.preview.show(snap.rect, w);
+      else this.preview.hide();
+    }
   }
 
   /** The mouse button was released: join the window under the cursor, or stay in the window that followed it. */
@@ -66,6 +83,12 @@ export class TabDrag {
     this.drag = null;
     const t = d.target;
     this.setTarget(d, null);
+    if (this.preview.dispose) this.preview.dispose();
+    else this.preview.hide();
+    if (!t && d.snap && !d.win.destroyed && !d.win.win.isDestroyed()) {
+      d.win.win.setBounds(d.snap.rect);
+      if (d.snap.zone === 'max') d.win.win.maximize();
+    }
     if (t && !t.ctl.destroyed && !d.tab.destroyed && this.b.moveTabToWindow(d.tab, t.ctl, { index: t.index })) {
       t.ctl.win.focus();
       return;
@@ -100,6 +123,22 @@ export class TabDrag {
     if (t && (!prev || prev.ctl !== t.ctl || prev.index !== t.index)) send(t.ctl, { index: t.index });
     if (!!prev !== !!t && !d.win.destroyed && !d.win.win.isDestroyed()) d.win.win.setOpacity(t ? HOVER_OPACITY : 1);
   }
+}
+
+/**
+ * Where a window dropped with the cursor at `p` snaps on `display`: {zone: 'max'|'left'|'right', rect} filling the
+ * work area or its left / right half, or null away from the edges.
+ */
+export function snapZone(p, display) {
+  if (!display || !display.bounds || !display.workArea) return null;
+  const b = display.bounds;
+  const wa = display.workArea;
+  if (p.x < b.x || p.x >= b.x + b.width || p.y < b.y - SNAP_EDGE || p.y >= b.y + b.height) return null;
+  const half = Math.floor(wa.width / 2);
+  if (p.y <= b.y + SNAP_EDGE) return { zone: 'max', rect: { x: wa.x, y: wa.y, width: wa.width, height: wa.height } };
+  if (p.x <= b.x + SNAP_EDGE) return { zone: 'left', rect: { x: wa.x, y: wa.y, width: half, height: wa.height } };
+  if (p.x >= b.x + b.width - 1 - SNAP_EDGE) return { zone: 'right', rect: { x: wa.x + half, y: wa.y, width: wa.width - half, height: wa.height } };
+  return null;
 }
 
 /** Tabs may leave or join normal and private windows, not AI agents' windows (agent/agent.js). */

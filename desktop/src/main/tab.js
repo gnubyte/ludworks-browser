@@ -103,10 +103,16 @@ export class Tab extends EventEmitter {
     this.error = null;
     this.typedNavigation = typed;
     this.url = url;
-    this.wc.loadURL(url).catch((e) => {
-      // Failures are reported through did-fail-load; aborted loads (ERR_ABORTED) are normal.
-      if (e && e.code !== 'ERR_ABORTED') log.debug('loadURL failed', { code: e.code });
-    });
+    const go = () => {
+      if (this.destroyed || this.wc.isDestroyed() || this.url !== url) return;
+      this.wc.loadURL(url).catch((e) => {
+        // Failures are reported through did-fail-load; aborted loads (ERR_ABORTED) are normal.
+        if (e && e.code !== 'ERR_ABORTED') log.debug('loadURL failed', { code: e.code });
+      });
+    };
+    // during startup pages wait for the content blocker's filters and the extensions (Browser.pagesGate)
+    if (this.browser.pagesGate) this.browser.pagesGate.then(go);
+    else go();
     this.update();
   }
 

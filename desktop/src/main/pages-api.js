@@ -46,6 +46,7 @@ export async function pageCommand(browser, tab, page, cmd, a) {
     case 'newtab.data':
       return {
         theme: themeOf(b),
+        chromeTheme: tab.private || !b.themes ? null : b.themes.shellTheme('ludworks://newtab'),
         engine: b.engine().name,
         topSites: tab.private ? [] : b.history.topSites(8),
         server: b.account.serverUrl ? b.account.serverUrl() : null,

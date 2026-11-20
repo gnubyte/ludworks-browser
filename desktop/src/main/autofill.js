@@ -19,6 +19,7 @@ const OFFSET_MAX = 32; // pages can post probes at will: keep the cache small
 const REANCHOR_WINDOW_MS = 1500; // scrolling this soon after the dropdown opened came with the focus
 const DROPDOWN_MAX = 50; // logins in the dropdown under a field (it scrolls; typing narrows it)
 const KEY_BUBBLE_MAX = 500; // logins in the key bubble (it scrolls and has a search box)
+const SEARCH_MAX = 60; // results of a whole-vault search in the key bubble
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 const frameKey = (f) => `${f.processId}:${f.routingId}`;
 const alive = (f) => {
@@ -124,6 +125,13 @@ export class Autofill {
     }
     out.sort((a, b) => b.score - a.score || (this.lastUsed.get(b.id) || 0) - (this.lastUsed.get(a.id) || 0) || String(a.data.name).localeCompare(String(b.data.name)));
     return out;
+  }
+
+  /** Shows the open autofill dropdown again (a passkey request arrived after it opened). */
+  refreshDropdown(tab) {
+    const s = this.tabs.get(tab.id);
+    if (!s || !s.dropdown || !alive(s.dropdown.frame) || !this.fillShowing(tab)) return;
+    this.showDropdown(tab, s.dropdown.frame, { kind: s.dropdown.kind, rect: s.dropdown.rect, webauthn: true }, { refresh: true }).catch((e) => log.debug('dropdown refresh failed', { message: e.message }));
   }
 
   /** Recompute the omnibox key state for a tab (after navigation, vault changes, new forms). */
@@ -323,7 +331,11 @@ export class Autofill {
   }
 
   /** Fill a login into the frame that owns the dropdown (or the frame with the login form for the key bubble). */
-  async fillItem(tab, frame, itemId, { allowOtherHost = false, allowInsecure = false } = {}) {
+  /**
+   * @param {{allowOtherHost?: boolean, allowInsecure?: boolean, allowAnySite?: boolean}} o
+   *   allowAnySite: the user picked a login saved for another website in the key bubble's search and confirmed
+   */
+  async fillItem(tab, frame, itemId, { allowOtherHost = false, allowInsecure = false, allowAnySite = false } = {}) {
     const acct = this.b.account;
     const e = await acct.vault.get(itemId);
     if (e.stale) throw new Error('This item failed the freshness check and is not used for autofill.');
@@ -331,8 +343,9 @@ export class Autofill {
     if (data.type !== 'login' || !data.login) throw new Error('Only logins can be filled.');
     const url = frame.url;
     const uris = (data.login.uris || []).filter((u) => u && typeof u.uri === 'string');
-    if (!uris.some((u) => ruleMatches(url, u))) throw new Error('This login is not saved for this website.');
-    if (bestMatchScore(url, uris) < STRONG_MATCH && !allowOtherHost) throw new Error('other_host');
+    const forSite = uris.some((u) => ruleMatches(url, u));
+    if (!forSite && !allowAnySite) throw new Error('This login is not saved for this website.');
+    if (forSite && bestMatchScore(url, uris) < STRONG_MATCH && !allowOtherHost) throw new Error('other_host');
     const sec = pageSecurity(url);
     if (sec === 'insecure') throw new Error('Passwords are never filled into insecure (http) pages.');
     let totp = '';
@@ -348,7 +361,8 @@ export class Autofill {
       id: itemId,
       expectedOrigin: u.origin,
       expectedUrl: url,
-      uris: uris.map((x) => ({ uri: x.uri, match: x.match || 'domain' })),
+      // a login confirmed for another site carries this page as its rule, so the page side accepts it
+      uris: forSite ? uris.map((x) => ({ uri: x.uri, match: x.match || 'domain' })) : [{ uri: u.origin, match: 'host' }],
       username: typeof data.login.username === 'string' ? data.login.username : '',
       password: typeof data.login.password === 'string' ? data.login.password : '',
       totp,
@@ -412,9 +426,11 @@ export class Autofill {
   }
 
   // ----------------------------------------------------------------------- key bubble + popups
-  async openKeyBubble(ctl, anchor) {
+  /** The key bubble: this site's logins, the save prompt; `browse` (toolbar badge) always offers the whole-vault search. */
+  async openKeyBubble(ctl, anchor, { browse = false } = {}) {
     const tab = ctl.activeTab();
     if (!tab) return null;
+    this.keyBrowse = browse;
     const acct = this.b.account;
     const phase = acct.phase();
     const s = this.st(tab);
@@ -430,6 +446,7 @@ export class Autofill {
         insecure: pageSecurity(url) === 'insecure_localhost', // plain-http localhost: fill only after asking
         capture: capture ? { id: capture.id, kind: capture.kind, host: capture.host, username: capture.username, itemName: capture.itemName } : null,
         total: matches.length,
+        browse,
         items: matches.slice(0, KEY_BUBBLE_MAX).map((m) => ({ id: m.id, name: String(m.data.name || ''), username: String(m.data.login.username || ''), otherHost: m.score < STRONG_MATCH, totp: !!m.data.login.totp, passkeys: Array.isArray(m.data.login.passkeys) ? m.data.login.passkeys.length : 0 })),
       },
       { ...anchor, width: 360 },
@@ -447,7 +464,7 @@ export class Autofill {
         case 'key:fill': {
           const frame = kind === 'fill' && s.dropdown && alive(s.dropdown.frame) ? s.dropdown.frame : this.fillTarget(tab);
           ctl.hidePopup(kind);
-          await this.fillItem(tab, frame, String(d.id), { allowOtherHost: !!d.allowOtherHost, allowInsecure: !!d.allowInsecure });
+          await this.fillItem(tab, frame, String(d.id), { allowOtherHost: !!d.allowOtherHost, allowInsecure: !!d.allowInsecure, allowAnySite: kind === 'key' && !!d.allowAnySite });
           return { ok: true };
         }
         case 'fill:passkey':
@@ -463,7 +480,7 @@ export class Autofill {
         case 'key:unlock': {
           await this.b.account.unlock(String(d.password || ''), { remember: null });
           await this.refreshTab(tab);
-          if (kind === 'key') return this.openKeyBubble(ctl, ctl.popup ? ctl.popup.anchor : { x: 0, y: ctl.topInset, width: 360 });
+          if (kind === 'key') return this.openKeyBubble(ctl, ctl.popup ? ctl.popup.anchor : { x: 0, y: ctl.topInset, width: 360 }, { browse: !!this.keyBrowse });
           if (s.dropdown && alive(s.dropdown.frame)) await this.showDropdown(tab, s.dropdown.frame, { kind: s.dropdown.kind, rect: s.dropdown.rect, webauthn: s.dropdown.webauthn }, { refresh: true });
           return { ok: true };
         }
@@ -472,6 +489,24 @@ export class Autofill {
           ctl.hidePopup(kind);
           this.b.openInternal(ctl, 'passwords');
           return { ok: true };
+        case 'key:search': {
+          // the whole vault, for the badge's search box: name, username and websites
+          const q = String(d.q || '').trim().toLowerCase().slice(0, 200);
+          const url = this.fillTarget(tab).url || tab.wc.getURL();
+          const out = [];
+          if (q) {
+            for (const it of await this.b.account.logins()) {
+              const uris = Array.isArray(it.data.login.uris) ? it.data.login.uris.filter((u) => u && typeof u.uri === 'string') : [];
+              const hay = [it.data.name || '', it.data.login.username || '', ...uris.map((u) => u.uri)].join(' ').toLowerCase();
+              if (!hay.includes(q)) continue;
+              const forSite = !!parseHttpUrl(url) && uris.some((u) => ruleMatches(url, u));
+              out.push({ id: it.id, name: String(it.data.name || ''), username: String(it.data.login.username || ''), site: uris.length ? hostLabel(uris[0].uri) : '', otherSite: !forSite, otherHost: forSite && bestMatchScore(url, uris) < STRONG_MATCH, totp: !!it.data.login.totp, passkeys: Array.isArray(it.data.login.passkeys) ? it.data.login.passkeys.length : 0 });
+              if (out.length >= SEARCH_MAX) break;
+            }
+            out.sort((a, b) => Number(a.otherSite) - Number(b.otherSite) || a.name.localeCompare(b.name));
+          }
+          return { ok: true, value: { items: out, host: hostLabel(url), fillable: !!parseHttpUrl(url) } };
+        }
         case 'key:copy': {
           const e = await this.b.account.vault.get(String(d.id));
           const field = d.field === 'username' ? e.data.login.username : d.field === 'totp' ? (await generateTotp(e.data.login.totp, Date.now())).code : e.data.login.password;

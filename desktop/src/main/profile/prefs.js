@@ -2,6 +2,7 @@
 
 import { EventEmitter } from 'node:events';
 import { ENGINES, validTemplate } from '../search.js';
+import { DEFAULT_SEND_TO, validSendTo } from '../agent/handoff.js';
 
 export const DEFAULT_PREFS = Object.freeze({
   searchEngine: 'google',
@@ -33,6 +34,8 @@ export const DEFAULT_PREFS = Object.freeze({
   agentScope: 'own', // 'own': the tabs they open and tabs the user shares | 'all': every normal tab
   agentScripts: true, // browser_evaluate: agents may run JavaScript in their pages
   agentLogins: 'ask', // browser_fill_login with saved passwords: 'ask' | 'allow' (sites already allowed) | 'never'
+  sendTo: DEFAULT_SEND_TO, // AI apps the "Send to AI" toolbar badge offers (agent/send.js): {vision, openclaw, claude}
+  openclawUrl: '', // OpenClaw gateway, '' = from ~/.openclaw/openclaw.json (default http://127.0.0.1:18789)
 });
 
 /** Keys that travel in the synced `prefs` record (VAULT-CRYPTO.md §9). */
@@ -73,6 +76,8 @@ const VALIDATORS = {
   agentScope: (v) => v === 'own' || v === 'all',
   agentScripts: (v) => typeof v === 'boolean',
   agentLogins: (v) => v === 'ask' || v === 'allow' || v === 'never',
+  sendTo: validSendTo,
+  openclawUrl: (v) => typeof v === 'string' && v.length <= 300 && (v === '' || /^https?:\/\/[^\s/]+(\/[^\s]*)?$/.test(v)),
 };
 
 export class Prefs extends EventEmitter {

@@ -22,6 +22,7 @@ $('home').append(icon('home', { size: 17 }));
 $('star').append(icon('star', { size: 16 }));
 $('key').append(icon('key', { size: 16 }));
 $('downloads').append(icon('download', { size: 18 }));
+$('vault').append(icon('key', { size: 18 }));
 $('menu').append(icon('menu', { size: 18 }));
 $('find-prev').append(icon('up', { size: 16 }));
 $('find-next').append(icon('down', { size: 16 }));
@@ -133,8 +134,10 @@ function renderTabs() {
 // Drag a tab along the strip to reorder it. Pulled out of the strip it moves into a window of its own that
 // follows the cursor; dropped on another window's strip it joins that window (src/main/tab-drag.js: the main
 // process moves the windows, from the OS cursor, and marks the drop spot in the other window's strip).
+// Along the strip the tab itself is the ghost: lifted and glowing, it follows the cursor while the other tabs
+// slide aside to open the spot it would land in. Geometry comes from offsetLeft, which transforms leave alone.
 const DETACH_DISTANCE = 30; // px above / below the strip (or beside the window) that pull a tab out
-let tabDrag = null; // {id, el, pointerId, x, grab: {x, y}, mode: null|'strip'|'out', sent}
+let tabDrag = null; // {id, el, pointerId, x, grab: {x, y}, mode: null|'strip'|'out', sent, layout, index}
 const tabDrop = h('div', { id: 'tab-drop', hidden: true });
 $('tabstrip').append(tabDrop);
 
@@ -145,7 +148,7 @@ function setupDrag(el, id) {
     const r = el.getBoundingClientRect();
     // where the cursor holds the tab once it is the first tab of a window of its own
     const grab = { x: Math.round($('tabs').getBoundingClientRect().left + e.clientX - r.left), y: Math.round(e.clientY) };
-    tabDrag = { id, el, pointerId: e.pointerId, x: e.clientX, grab, mode: null, sent: false };
+    tabDrag = { id, el, pointerId: e.pointerId, x: e.clientX, grab, mode: null, sent: false, layout: null, index: null };
     el.setPointerCapture(e.pointerId);
   });
 }
@@ -155,29 +158,86 @@ function outOfStrip(e) {
   return e.clientY < r.top - DETACH_DISTANCE || e.clientY > r.bottom + DETACH_DISTANCE || e.clientX < -DETACH_DISTANCE || e.clientX > window.innerWidth + DETACH_DISTANCE;
 }
 
-/** Live tab elements other than the dragged one, and the index before which a drop at clientX lands. */
-function stripDropIndex(clientX, exceptEl) {
-  const others = [...$('tabs').children].filter((c) => c !== exceptEl);
-  let index = others.length;
-  for (let i = 0; i < others.length; i++) {
-    const r = others[i].getBoundingClientRect();
-    if (clientX < r.left + r.width / 2) {
-      index = i;
-      break;
-    }
-  }
-  return { others, index };
+/** Untransformed positions of the strip's tabs, in viewport x. */
+function stripLayout() {
+  const base = $('tabstrip').getBoundingClientRect().left;
+  return [...$('tabs').children].map((el) => ({ el, left: base + el.offsetLeft, width: el.offsetWidth }));
 }
 
-/** The drop marker before tab `index` of `others` (after the last one past the end); null hides it. */
-function showTabDrop(others, index) {
-  if (index === null || !others.length) {
+function shiftTabs(fn) {
+  for (const el of $('tabs').children) {
+    const dx = fn(el);
+    el.style.transform = dx ? `translateX(${Math.round(dx)}px)` : '';
+  }
+}
+
+function clearTabShifts() {
+  $('tabs').classList.remove('reordering');
+  for (const el of $('tabs').children) el.style.transform = '';
+}
+
+/** Moves the ghost to follow the cursor and slides the other tabs out of the way of its landing spot. */
+function dragAlongStrip(d, clientX) {
+  const L = d.layout;
+  const k = L.findIndex((t) => t.el === d.el);
+  const me = L[k];
+  const first = L[0];
+  const last = L[L.length - 1];
+  const dx = Math.max(first.left - me.left, Math.min(clientX - d.x, last.left + last.width - me.left - me.width));
+  const center = me.left + dx + me.width / 2;
+  const others = L.filter((t) => t.el !== d.el);
+  let index = others.findIndex((t) => center < t.left + t.width / 2);
+  if (index < 0) index = others.length;
+  d.index = index;
+  shiftTabs((el) => {
+    if (el === d.el) return dx;
+    const i = L.findIndex((t) => t.el === el);
+    if (i > k && i - 1 < index) return -me.width;
+    if (i < k && i >= index) return me.width;
+    return 0;
+  });
+}
+
+/** Drops the ghost into its spot at once (the strip re-renders in that order when the move comes back). */
+function settleTab(d) {
+  const before = d.el.getBoundingClientRect().left;
+  const box = $('tabs');
+  const others = [...box.children].filter((c) => c !== d.el);
+  box.classList.remove('reordering');
+  box.insertBefore(d.el, others[d.index] || null);
+  for (const el of box.children) {
+    el.style.transition = 'none';
+    el.style.transform = '';
+  }
+  const after = d.el.getBoundingClientRect().left;
+  d.el.style.transform = `translateX(${Math.round(before - after)}px)`;
+  void d.el.offsetWidth;
+  requestAnimationFrame(() => {
+    for (const el of box.children) el.style.transition = '';
+    d.el.classList.add('settling');
+    d.el.style.transform = '';
+    setTimeout(() => d.el.classList.remove('settling'), 220);
+  });
+}
+
+/**
+ * Another window's tab hovering over this strip: open a gap before tab `index` (null closes it) with a
+ * glowing ghost slot where it would land.
+ */
+function showTabDrop(index) {
+  const L = stripLayout();
+  if (index === null || !L.length) {
     tabDrop.hidden = true;
+    clearTabShifts();
     return;
   }
+  const width = Math.min(180, Math.max(90, L[L.length - 1].width));
   const base = $('tabstrip').getBoundingClientRect().left;
-  const x = index < others.length ? others[index].getBoundingClientRect().left : others[others.length - 1].getBoundingClientRect().right;
-  tabDrop.style.left = `${Math.round(x - base - 1)}px`;
+  const x = index < L.length ? L[index].left : L[L.length - 1].left + L[L.length - 1].width;
+  $('tabs').classList.add('reordering');
+  shiftTabs((el) => (L.findIndex((t) => t.el === el) >= index ? width : 0));
+  tabDrop.style.left = `${Math.round(x - base + 2)}px`;
+  tabDrop.style.width = `${width - 4}px`;
   tabDrop.hidden = false;
 }
 
@@ -198,29 +258,32 @@ window.addEventListener('pointermove', (e) => {
     // the page keeps sending until the button is released: hold the pointer on the strip, as the tab's own
     // element goes away when the tab moves into a window of its own
     d.mode = 'out';
+    clearTabShifts();
     d.el.classList.add('dragging');
-    showTabDrop([], null);
     $('tabstrip').setPointerCapture(d.pointerId);
     call('tab.drag', { phase: 'start', id: d.id, x: d.grab.x, y: d.grab.y });
     return;
   }
   if (!d.mode && Math.abs(e.clientX - d.x) > 6) {
     d.mode = 'strip';
+    d.layout = stripLayout();
     d.el.classList.add('dragging');
+    $('tabs').classList.add('reordering');
   }
-  if (d.mode === 'strip') {
-    const { others, index } = stripDropIndex(e.clientX, d.el);
-    showTabDrop(others, index);
-  }
+  if (d.mode === 'strip') dragAlongStrip(d, e.clientX);
 });
 
 function endTabDrag(e, released) {
   const d = tabDrag;
   tabDrag = null;
   d.el.classList.remove('dragging');
-  showTabDrop([], null);
   if (d.mode === 'out') call('tab.drag', { phase: 'end' });
-  else if (d.mode === 'strip' && released) call('tab.move', { id: d.id, index: stripDropIndex(e.clientX, d.el).index });
+  else if (d.mode === 'strip' && released && d.index !== null) {
+    settleTab(d);
+    call('tab.move', { id: d.id, index: d.index });
+    return;
+  }
+  clearTabShifts();
 }
 window.addEventListener('pointerup', (e) => {
   if (tabDrag && e.pointerId === tabDrag.pointerId) endTabDrag(e, true);
@@ -237,17 +300,14 @@ window.addEventListener('lostpointercapture', (e) => {
 
 // Another window's tab being dragged over this strip: where it would land (src/main/tab-drag.js).
 window.lw.on('tab-drop', (m) => {
-  const others = [...$('tabs').children];
-  showTabDrop(others, m && Number.isInteger(m.index) ? Math.min(m.index, others.length) : null);
+  if (tabDrag) return; // this window's own drag owns the strip
+  showTabDrop(m && Number.isInteger(m.index) ? Math.min(m.index, $('tabs').children.length) : null);
 });
 
 // The strip's geometry, for the main process to place tabs dropped here from other windows.
 let lastStrip = '';
 function reportStrip() {
-  const tabs = [...$('tabs').children].map((el) => {
-    const r = el.getBoundingClientRect();
-    return { id: Number(el.dataset.id), left: Math.round(r.left), right: Math.round(r.right) };
-  });
+  const tabs = stripLayout().map((t) => ({ id: Number(t.el.dataset.id), left: Math.round(t.left), right: Math.round(t.left + t.width) }));
   const msg = { tabs, bottom: Math.round($('tabstrip').getBoundingClientRect().bottom) };
   const key = JSON.stringify(msg);
   if (key === lastStrip) return;
@@ -292,6 +352,14 @@ function renderToolbar() {
   $('key').classList.toggle('locked', !!(k && k.locked));
   $('key').classList.toggle('capture', !!(k && k.capture));
   $('key').title = k && k.capture ? 'Save password?' : k && k.locked ? 'Ludworks vault is locked' : k && k.count ? `${k.count} saved login${k.count === 1 ? '' : 's'} for this site` : 'Passwords';
+  // the password manager badge, always there: this site's login count, locked / signed-out states
+  const vb = $('vault');
+  vb.hidden = !!state.agent;
+  const acctPhase = (state.account || {}).phase || 'logged_out';
+  clear(vb).append(icon('key', { size: 18 }));
+  vb.classList.toggle('locked', acctPhase !== 'unlocked');
+  if (acctPhase === 'unlocked' && k && k.count) vb.append(h('span', { class: 'vault-count' }, k.count > 99 ? '99+' : String(k.count)));
+  vb.title = acctPhase === 'logged_out' ? 'Passwords — sign in to Ludworks' : acctPhase !== 'unlocked' ? 'Passwords — vault locked' : k && k.count ? `Passwords — ${k.count} for this site · search all` : 'Passwords — search all';
   // downloads
   const d = state.downloads || {};
   const db = $('downloads');
@@ -304,7 +372,10 @@ function renderToolbar() {
     ring.style.mask = 'radial-gradient(circle, transparent 11px, #000 11.5px)';
     db.append(ring);
   }
-  if (d.unseen) db.append(h('span', { class: 'badge' }));
+  // a counter: downloads in progress (accent), else finished ones not looked at yet (green)
+  const n = d.active || d.unseen || 0;
+  if (n) db.append(h('span', { class: `dl-count ${d.active ? '' : 'done'}` }, n > 99 ? '99+' : String(n)));
+  db.title = d.active ? `Downloads — ${d.active} in progress` : d.unseen ? `Downloads — ${d.unseen} new` : 'Downloads';
   // account
   const a = state.account || {};
   const ab = $('account');
@@ -649,12 +720,68 @@ function renderAgent() {
   );
 }
 
+// One of the user's pages controlled by an AI app (sent with "let it control this page", or shared with an
+// agent): the page sits in a glowing frame and a bar under the toolbar says who controls it, with Stop.
+function renderControl() {
+  const c = state.control;
+  root.dataset.control = c ? (c.waiting ? 'waiting' : c.busy ? 'busy' : 'on') : 'false';
+  let bar = $('control-bar');
+  if (!c) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = h('div', { id: 'control-bar', role: 'status' });
+    $('toolbar').after(bar);
+  }
+  const key = JSON.stringify(c);
+  if (bar.dataset.key === key) return;
+  bar.dataset.key = key;
+  clear(bar);
+  bar.append(
+    h('span', { class: 'cb-dot' }),
+    icon('bot', { size: 15 }),
+    h('span', { class: 'what' }, c.waiting ? `${c.client} may control this page — waiting for it to connect` : c.stopped ? `${c.client} was stopped — it cannot control this page until you resume it` : `This page is being controlled by ${c.client}`),
+    h('span', { class: 'grow' }),
+    h('button', { class: 'agent-btn', title: `${c.client} can no longer read or operate this page`, onclick: () => call('control.stop') }, 'Stop control'),
+  );
+}
+
+// A Chrome theme (src/main/themes): its colours as CSS variables over the light or dark base, its images as
+// url() variables the stylesheet tiles (shell.css [data-chrome-theme]).
+let themeKey = '';
+let themeProps = [];
+const THEME_IMAGES = { frame: '--theme-frame-img', frameInactive: '--theme-frame-inactive-img', frameOverlay: '--theme-frame-overlay-img', toolbar: '--theme-toolbar-img', tabBackground: '--theme-tab-img' };
+function renderChromeTheme() {
+  const t = state.chromeTheme;
+  const key = t ? String(t.rev) : '';
+  if (key === themeKey) return;
+  themeKey = key;
+  for (const p of themeProps) root.style.removeProperty(p);
+  themeProps = [];
+  if (!t) {
+    delete root.dataset.chromeTheme;
+    return;
+  }
+  const set = (k, v) => {
+    root.style.setProperty(k, v);
+    themeProps.push(k);
+  };
+  for (const [k, v] of Object.entries(t.vars || {})) if (/^--[a-z-]+$/.test(k)) set(k, v);
+  for (const [k, prop] of Object.entries(THEME_IMAGES)) if (t.images && t.images[k]) set(prop, `url("${t.images[k].replace(/["\\]/g, '')}")`);
+  root.dataset.chromeTheme = t.name || 'theme';
+}
+window.addEventListener('focus', () => (root.dataset.inactive = 'false'));
+window.addEventListener('blur', () => (root.dataset.inactive = 'true'));
+
 function render(s) {
   state = s;
   root.dataset.theme = s.theme;
+  renderChromeTheme();
   root.dataset.fullscreen = String(!!s.fullscreen);
   root.dataset.htmlfs = String(!!s.htmlFullscreen);
   renderAgent();
+  renderControl();
   renderTabs();
   renderToolbar();
   renderFeatureButtons();
@@ -667,7 +794,17 @@ function render(s) {
 
 // --------------------------------------------------------------------------------- omnibox
 const url = $('url');
+// A view that takes the keyboard without asking gives it straight back (WindowCtl.keepFocus): coming back
+// within moments of a blur, the address bar keeps what was typed, the caret and the suggestions.
+let omniBlur = { at: 0, edited: false };
 url.addEventListener('focus', () => {
+  if (Date.now() - omniBlur.at < 500 && omniBlur.edited) {
+    omniFocused = true;
+    omniEdited = true;
+    $('omnibox').classList.add('focused');
+    call('focus', { focused: true });
+    return;
+  }
   omniFocused = true;
   omniEdited = false;
   $('omnibox').classList.add('focused');
@@ -677,6 +814,7 @@ url.addEventListener('focus', () => {
   call('focus', { focused: true });
 });
 url.addEventListener('blur', () => {
+  omniBlur = { at: Date.now(), edited: omniEdited };
   omniFocused = false;
   $('omnibox').classList.remove('focused');
   call('focus', { focused: false });
@@ -749,6 +887,7 @@ $('home').addEventListener('click', () => call('nav', { action: 'home' }));
 $('siteinfo').addEventListener('click', () => call('popup.open', { kind: 'site-info', anchor: anchorOf($('siteinfo'), { width: 340 }) }));
 $('star').addEventListener('click', () => call('popup.open', { kind: 'star', anchor: anchorOf($('star'), { align: 'right', width: 340 }) }));
 $('key').addEventListener('click', () => call('popup.open', { kind: 'key', anchor: anchorOf($('key'), { align: 'right', width: 360 }) }));
+$('vault').addEventListener('click', () => call('popup.open', { kind: 'key', anchor: anchorOf($('vault'), { align: 'right', width: 380 }), data: { browse: true } }));
 $('downloads').addEventListener('click', () => call('popup.open', { kind: 'downloads', anchor: anchorOf($('downloads'), { align: 'right', width: 380 }) }));
 $('account').addEventListener('click', () => call('popup.open', { kind: 'account', anchor: anchorOf($('account'), { align: 'right', width: 340 }) }));
 $('menu').addEventListener('click', () => call('popup.open', { kind: 'menu', anchor: anchorOf($('menu'), { align: 'right', width: 300 }) }));
@@ -762,11 +901,28 @@ window.lw.on('open-key', () => {
   if (!$('key').hidden) $('key').click();
 });
 window.lw.on('open-tab-search', () => call('popup.open', { kind: 'tab-search', anchor: anchorOf($('newtab'), { width: 380 }) }));
-window.lw.on('download-started', () => {
+// A download started: it flies from the page into the downloads button (fx.html, played by the main process
+// over the whole window), which pops when it lands. Finished: the button bounces, waits, and bounces again.
+const FLY_MS = 950; // fx.js FLY_MS
+function replay(el, cls) {
+  el.classList.remove('dl-pop', 'dl-bounce', 'dl-failed');
+  void el.offsetWidth;
+  el.classList.add(cls);
+}
+window.lw.on('download-started', (m) => {
   const d = $('downloads');
-  d.classList.remove('pulse');
-  void d.offsetWidth;
-  d.classList.add('pulse');
+  d.hidden = false; // the state with the new download may still be on its way
+  const r = d.getBoundingClientRect();
+  if (r.width && !document.hidden) call('fx.download', { to: { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }, name: (m && m.name) || '' });
+  setTimeout(() => replay(d, 'dl-pop'), document.hidden ? 0 : FLY_MS - 120);
+});
+window.lw.on('download-finished', (m) => {
+  const d = $('downloads');
+  if (d.hidden) return;
+  replay(d, m && m.state === 'completed' ? 'dl-bounce' : 'dl-failed');
+});
+$('downloads').addEventListener('animationend', (e) => {
+  if (e.target === $('downloads')) $('downloads').classList.remove('dl-pop', 'dl-bounce', 'dl-failed');
 });
 window.lw.on('zoom-bubble', () => {});
 

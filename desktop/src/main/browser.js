@@ -1,6 +1,6 @@
 // The browser: profile services, sessions, windows, commands and IPC wiring.
 
-import { app, session, ipcMain, dialog, nativeTheme, shell, Menu, desktopCapturer, screen, webContents as allWebContents } from 'electron';
+import { app, session, ipcMain, dialog, nativeTheme, shell, Menu, desktopCapturer, screen, powerMonitor, webContents as allWebContents } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -22,6 +22,7 @@ import { DefaultBrowser } from './default-browser.js';
 import { WebRequestHub } from './webrequest.js';
 import { tabWebPreferences } from './tab.js';
 import { TabDrag, cleanStrip } from './tab-drag.js';
+import { SnapPreview } from './snap-preview.js';
 
 const NEWTAB = 'ludworks://newtab/';
 const SESSION_SAVE_DELAY = 1500;
@@ -46,7 +47,7 @@ export class Browser {
     this.pinnedNext = new Map(); // host → fingerprint the Ludworks server announced as its renewal
     this.pendingPermission = new Map(); // tab id → [{...}]
     this.shortcuts = new Shortcuts(this);
-    this.tabDrag = new TabDrag(this, () => screen.getCursorScreenPoint());
+    this.tabDrag = new TabDrag(this, () => screen.getCursorScreenPoint(), { displayAt: (p) => screen.getDisplayNearestPoint(p), preview: new SnapPreview() });
     this.sessionTimer = null;
     this.features = []; // feature modules: toolbar buttons, popups, page commands, network hooks (see registerFeature)
     this.attachedSessions = []; // [{ses, isPrivate}] set up by setupSession
@@ -61,12 +62,22 @@ export class Browser {
     this.permissions = new Permissions(this.db);
     this.downloads = new Downloads({ db: this.db, prefs: this.prefs });
     this.defaultBrowser = new DefaultBrowser();
+    const { Themes } = await import('./themes/themes.js');
+    this.themes = new Themes(this); // before any window: windows take their colours from it
     if (!this.prefs.get('hardwareAcceleration')) app.disableHardwareAcceleration();
     this.session = session.defaultSession;
     this.ua = chromeUserAgent();
     app.userAgentFallback = this.ua;
     this.setupSession(this.session, { isPrivate: false });
-    registerProtocols(session.fromPartition('lwui'), this.appDir, { shell: true, pages: false });
+    // Cookies reach the disk soon after they change and before the computer sleeps or shuts down, not only every
+    // 30 s and at a clean exit: a crash, a killed process or a power cut then loses no fresh sign-in.
+    this.session.cookies.on('changed', () => {
+      clearTimeout(this.cookieFlushTimer);
+      this.cookieFlushTimer = setTimeout(() => this.flushCookies(), 5000);
+    });
+    for (const ev of ['suspend', 'shutdown', 'lock-screen']) powerMonitor.on(ev, () => this.flushCookies());
+    const themeFile = (rel) => this.themes.file(rel);
+    registerProtocols(session.fromPartition('lwui'), this.appDir, { shell: true, pages: false, themeFile });
 
     const { Account } = await import('./account/account.js');
     const { Autofill } = await import('./autofill.js');
@@ -98,6 +109,10 @@ export class Browser {
     const { AgentHub } = await import('./agent/agent.js');
     this.agent = new AgentHub(this);
     this.registerFeature(this.agent);
+    const { SendToAi } = await import('./agent/send.js');
+    this.sendToAi = new SendToAi(this);
+    this.registerFeature(this.sendToAi);
+    this.registerFeature(this.themes);
     this.registerIpc();
 
     this.bookmarks.on('change', () => this.onBookmarksChange());
@@ -106,8 +121,11 @@ export class Browser {
     nativeTheme.on('updated', () => this.forEachWindow((w) => w.applyTheme()));
 
     this.startEngineComponents();
-    // cached filters in place and extensions loaded (content scripts) before restored tabs load
-    await Promise.all([this.blocker.whenReady(1500), this.extensions.whenReady(2500)]);
+    // Pages wait until the cached filters are in place and extensions are loaded (content scripts); the windows
+    // do not: they show at once and their tabs start loading when this opens (Tab.load).
+    this.pagesGate = Promise.all([this.blocker.whenReady(1500), this.extensions.whenReady(2500)])
+      .catch((e) => log.warn('page start gate failed', { message: e && e.message }))
+      .finally(() => (this.pagesGate = null));
     const restored = this.prefs.get('startup') === 'restore' ? this.restoreSession() : 0;
     const urls = [...this.urlsFromArgv(argv), ...earlyUrls];
     const firstRun = !this.db.getMeta('welcomed', false);
@@ -146,7 +164,7 @@ export class Browser {
   /** @param {Electron.Session} ses */
   setupSession(ses, { isPrivate }) {
     ses.setUserAgent(this.ua);
-    registerProtocols(ses, this.appDir, { shell: false, pages: true });
+    registerProtocols(ses, this.appDir, { shell: false, pages: true, themeFile: (rel) => this.themes.file(rel) });
     // The content preload runs in every frame of every page of this session: tabs, and the tabs and popups
     // pages open with window.open / target=_blank (Electron ignores a webPreferences preload for those).
     const preload = { type: 'frame', id: 'ludworks-content', filePath: this.paths.contentPreload };
@@ -195,9 +213,17 @@ export class Browser {
     if (empty) {
       // the caller adds the first tab (window.open popups adopt the opener-created webContents)
     } else if (tabs && tabs.length) {
-      tabs.forEach((t, i) => ctl.newTab({ url: t.url, active: i === active, pinned: !!t.pinned }));
+      // restored tabs: only the active one loads now, the others when first shown (as in Chrome)
+      tabs.forEach((t, i) => ctl.newTab({ url: t.url, active: i === active, pinned: !!t.pinned, lazy: i !== active, title: typeof t.title === 'string' ? t.title.slice(0, 500) : '' }));
     } else {
-      for (const [i, u] of (urls && urls.length ? urls : [this.newTabUrl()]).entries()) ctl.newTab({ url: u, active: i === 0 });
+      const list = urls && urls.length ? urls : [this.newTabUrl()];
+      // a window that opens on the new tab page starts with the keyboard in the address bar (once its shell is up)
+      const omnibox = !agent && !inactive && list[0] === NEWTAB;
+      if (omnibox) ctl.shellFocused = ctl.omniboxOnReady = true;
+      for (const [i, u] of list.entries()) {
+        const t = ctl.newTab({ url: u, active: i === 0 });
+        if (omnibox && i === 0) this.keepOmniboxWhileLoading(t);
+      }
     }
     ctl.win.on('resize', () => this.rememberWindowState(ctl));
     ctl.win.on('move', () => this.rememberWindowState(ctl));
@@ -274,7 +300,7 @@ export class Browser {
     ctl.win.focus();
   }
 
-  handleCommandLine(argv) {
+  async handleCommandLine(argv) {
     if (this.agentRequest(argv) && !this.urlsFromArgv(argv).length) return;
     const isPrivate = argv.includes('--incognito') || argv.includes('--private') || argv.includes('--inprivate');
     const urls = this.urlsFromArgv(argv);
@@ -402,7 +428,27 @@ export class Browser {
     return n;
   }
 
-  beforeQuit() {
+  /** Writes the cookie store to disk now (it otherwise does so every 30 s and at a clean exit). Never throws. */
+  async flushCookies() {
+    try {
+      await this.session.cookies.flushStore();
+    } catch (e) {
+      log.debug('cookie flush failed', { message: e.message });
+    }
+  }
+
+  /**
+   * The app is quitting: the first time, quitting waits (at most 2 s) for the cookie store to reach the disk, so
+   * the newest sign-ins survive even if the exit that follows is not clean; then it quits for real.
+   */
+  beforeQuit(e) {
+    if (!this.cookiesFlushedForQuit && e && typeof e.preventDefault === 'function') {
+      this.cookiesFlushedForQuit = true;
+      e.preventDefault();
+      Promise.race([this.flushCookies(), new Promise((r) => setTimeout(r, 2000))]).then(() => app.quit());
+      return;
+    }
+    if (this.quitting) return;
     this.quitting = true;
     this.saveSession();
     if (this.agent) this.agent.beforeQuit();
@@ -710,6 +756,38 @@ export class Browser {
     return ctl.newTab({ url });
   }
 
+  /** A new tab with the keyboard in the address bar, not in the new tab page (its search box). */
+  newTabWithOmnibox(ctl) {
+    ctl.shellFocused = true; // activate() leaves the keyboard alone
+    const tab = ctl.newTab({ active: true });
+    this.focusOmnibox(ctl);
+    this.keepOmniboxWhileLoading(tab);
+  }
+
+  /** The engine gives a new tab's page the keyboard as its first page loads: hand it back to the address bar. */
+  keepOmniboxWhileLoading(tab) {
+    const wc = tab.wc;
+    // not from inside the focus change itself, which would undo it
+    const refocus = () =>
+      setTimeout(() => {
+        if (!tab.destroyed && !tab.ctl.destroyed && tab.ctl.activeTab() === tab) this.focusOmnibox(tab.ctl, { select: false });
+      }, 0);
+    const done = () => {
+      clearTimeout(timer);
+      if (!wc.isDestroyed()) wc.removeListener('focus', refocus);
+    };
+    const timer = setTimeout(done, 5000);
+    wc.on('focus', refocus);
+    wc.once('did-stop-loading', () => setTimeout(done, 0));
+  }
+
+  focusOmnibox(ctl, { select = true } = {}) {
+    if (ctl.destroyed || ctl.shell.isDestroyed()) return;
+    ctl.shellFocused = true;
+    ctl.shell.focus();
+    ctl.shell.send('focus-omnibox', { select });
+  }
+
   // ------------------------------------------------------------------------------- commands
   command(cmd, { ctl, tab = null, arg } = {}) {
     if (!ctl || ctl.destroyed) return;
@@ -717,9 +795,7 @@ export class Browser {
     const nh = tab ? tab.wc.navigationHistory : null;
     switch (cmd) {
       case 'newTab':
-        ctl.newTab({ active: true });
-        ctl.shell.focus();
-        ctl.shell.send('focus-omnibox', { select: true });
+        this.newTabWithOmnibox(ctl);
         break;
       case 'closeTab':
         if (tab) ctl.closeTab(tab.id);
@@ -732,9 +808,7 @@ export class Browser {
         break;
       case 'focusOmnibox':
       case 'focusSearch':
-        ctl.shellFocused = true;
-        ctl.shell.focus();
-        ctl.shell.send('focus-omnibox', { select: true });
+        this.focusOmnibox(ctl);
         break;
       case 'reload':
         if (tab) tab.reload(false);
@@ -1066,8 +1140,15 @@ export class Browser {
   onDownloadsChange(ev) {
     this.broadcastShared();
     if (ev && ev.started) {
-      const ctl = this.focusedWindow();
-      if (ctl) ctl.shell.send('download-started');
+      // the window of the tab it came from (else the frontmost one) shows it flying into its downloads button
+      const from = ev.webContents && this.tabForWebContents(ev.webContents);
+      const ctl = (from && from.ctl) || this.focusedWindow();
+      if (ctl && !ctl.shell.isDestroyed()) ctl.shell.send('download-started', { name: ev.started.filename });
+    }
+    if (ev && ev.finished) {
+      this.forEachWindow((w) => {
+        if (!w.agent && !w.shell.isDestroyed()) w.shell.send('download-finished', { state: ev.finished.state, name: ev.finished.filename });
+      });
     }
     this.forEachWindow((w) => {
       if (w.popup && w.popup.kind === 'downloads' && w.overlay) w.overlay.webContents.send('popup-data', { kind: 'downloads', data: this.downloads.list(30) });
@@ -1142,6 +1223,10 @@ export class Browser {
     const byId = (id) => ctl.tabById(Number(id));
     switch (cmd) {
       case 'ready':
+        if (ctl.omniboxOnReady) {
+          ctl.omniboxOnReady = false;
+          setTimeout(() => this.focusOmnibox(ctl), 0);
+        }
         return ctl.state();
       case 'layout':
         if (sender === ctl.shell && Number.isFinite(a.top)) ctl.setTopInset(a.top);
@@ -1150,8 +1235,13 @@ export class Browser {
         ctl.shellFocused = !!a.focused;
         return null;
       case 'tab.new':
-        ctl.newTab({ active: true });
-        ctl.shell.send('focus-omnibox', { select: true });
+        this.newTabWithOmnibox(ctl);
+        return null;
+      case 'control.stop': // the bar over a page an AI app controls (shell.js renderControl)
+        if (this.agent && ctl.activeTab()) this.agent.revokeControl(ctl.activeTab());
+        return null;
+      case 'fx.download': // the shell found where its downloads button is: play the flyover there
+        if (sender === ctl.shell && a.to && Number.isFinite(a.to.x) && Number.isFinite(a.to.y)) ctl.flyDownload({ x: a.to.x, y: a.to.y }, a.name);
         return null;
       case 'tab.close':
         ctl.closeTab(Number(a.id));
@@ -1298,7 +1388,7 @@ export class Browser {
       { label: 'New tab to the right', click: () => ctl.newTab({ index: i + 1 }) },
       { type: 'separator' },
       { label: 'Reload', click: () => tab.reload() },
-      { label: 'Duplicate', click: () => ctl.newTab({ url: tab.wc.getURL(), index: i + 1 }) },
+      { label: 'Duplicate', click: () => ctl.newTab({ url: tab.wc.getURL() || tab.url, index: i + 1 }) },
       { label: tab.pinned ? 'Unpin' : 'Pin', click: () => { tab.pinned = !tab.pinned; ctl.moveTab(tab.id, tab.pinned ? ctl.tabs.filter((t) => t.pinned && t !== tab).length : i); tab.update(); } },
       { label: tab.wc.isAudioMuted() ? 'Unmute site' : 'Mute site', click: () => { tab.wc.setAudioMuted(!tab.wc.isAudioMuted()); tab.update(); } },
       ...(move.length ? [{ type: 'separator' }, ...move] : []),
@@ -1415,7 +1505,7 @@ export class Browser {
       case 'account':
         return ctl.showPopup('account', this.account.summary(), { ...a, width: 340 });
       case 'key':
-        return this.autofill.openKeyBubble(ctl, a);
+        return this.autofill.openKeyBubble(ctl, a, { browse: !!(data && data.browse) });
       case 'tab-search':
         return ctl.showPopup('tab-search', { tabs: ctl.tabs.map((t) => ({ id: t.id, title: t.title, url: t.wc.getURL() })) }, { ...a, width: 380 });
       default: {

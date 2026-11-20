@@ -279,6 +279,8 @@ export class Passkeys {
         const key = `${tab.id}:${o.requestId}`;
         this.conditional.set(key, { tabId: tab.id, frame, rpId, allow, challenge: o.challenge, origin, uv: o.userVerification, resolve });
         this.b.autofill.refreshTab(tab);
+        // the page asked after its sign-in field already had focus and a dropdown: show it again with the passkeys
+        this.b.autofill.refreshDropdown(tab);
       });
     }
     const locked = !acct.vault.isUnlocked();

@@ -27,7 +27,7 @@ import { log } from '../util/log.js';
 const APPROVAL_TIMEOUT = 3 * 60 * 1000;
 const DENY_COOLDOWN = 10 * 60 * 1000;
 const IDLE_SESSION = 60 * 60 * 1000;
-const KNOWN_CLIENTS = { 'claude-code': 'Claude Code', 'claude-ai': 'Claude', vision: 'Vision', 'cursor-vscode': 'Cursor', cursor: 'Cursor', codex: 'Codex', 'codex-mcp-client': 'Codex', 'gemini-cli-mcp-client': 'Gemini CLI', windsurf: 'Windsurf', lwb: 'lwb' };
+const KNOWN_CLIENTS = { 'claude-code': 'Claude Code', 'claude-ai': 'Claude', vision: 'Vision', openclaw: 'OpenClaw', 'cursor-vscode': 'Cursor', cursor: 'Cursor', codex: 'Codex', 'codex-mcp-client': 'Codex', 'gemini-cli-mcp-client': 'Gemini CLI', windsurf: 'Windsurf', lwb: 'lwb' };
 const BLOCKED_SCHEMES = /^(ludworks|lwshell|chrome|devtools|chrome-extension|chrome-untrusted|javascript|vbscript|view-source):/i;
 
 /** A display name for a client id ("claude-code" → "Claude Code"). */
@@ -79,6 +79,7 @@ export class AgentHub {
     this.drivers = new Map(); // tab id → AgentTab
     this.byWc = new Map(); // webContents id → AgentTab
     this.owners = new Map(); // tab id → AgentSession (opened by it, or shared with it)
+    this.grants = new Map(); // tab id → {name, clients: Set} — "let it control this page" (send.js): shared when that client connects
     this.pendingApprovals = new Map(); // client → Promise<boolean>
     this.allowedOnce = new Set();
     this.denied = new Map(); // client → until (ms)
@@ -174,9 +175,63 @@ export class AgentHub {
     if (!s) {
       s = new AgentSession({ key: k, client: name, label });
       this.sessions.set(k, s);
+      for (const [id, g] of this.grants) {
+        const t = this.findTab(id);
+        if (t && g.clients.has(name)) {
+          this.share(s, t);
+          s.current = t.id;
+        }
+      }
       this.refresh();
     } else if (label && !s.label) s.label = label;
     return s;
+  }
+
+  // ------------------------------------------------------------------- control of a user's page
+  /**
+   * The user sent a page to an AI app and let it control the page (send.js): `clients` (display names, as
+   * agents connect with them) may use that tab without asking — right away when connected, else once one
+   * connects. The page shows that it is controlled (controlOf) until the user stops it.
+   */
+  grantControl(tab, name, clients) {
+    if (!tab || tab.private || tab.ctl.agent) return false;
+    if (!this.on) this.browser.prefs.update({ agentAccess: true });
+    for (const c of clients) {
+      this.allowedOnce.add(c);
+      this.denied.delete(c);
+    }
+    this.grants.set(tab.id, { name, clients: new Set(clients) });
+    const live = [...this.sessions.values()].filter((s) => clients.includes(s.client)).sort((a, b) => b.lastUsed - a.lastUsed);
+    if (live.length) {
+      this.share(live[0], tab);
+      live[0].current = tab.id;
+    }
+    this.refresh(live[0] || null);
+    tab.update();
+    return true;
+  }
+
+  /** The user took the page back: no agent controls it any more, none may take it over later. */
+  revokeControl(tab) {
+    this.grants.delete(tab.id);
+    const owner = this.owners.get(tab.id);
+    if (owner && owner.shared.has(tab.id)) {
+      owner.shared.delete(tab.id);
+      this.owners.delete(tab.id);
+      if (owner.current === tab.id) owner.current = null;
+      this.release(tab);
+      this.refresh(owner);
+    } else tab.update();
+    this.browser.refreshToolbar();
+  }
+
+  /** Who controls this user's tab: {client, busy, waiting} (waiting: allowed, not connected yet), or null. */
+  controlOf(tab) {
+    if (!tab || tab.ctl.agent) return null;
+    const owner = this.owners.get(tab.id);
+    if (owner && owner.shared.has(tab.id) && this.sessions.has(owner.key)) return { client: owner.client, busy: owner.busy > 0 && !owner.stopped, stopped: owner.stopped, waiting: false };
+    const g = this.grants.get(tab.id);
+    return g ? { client: g.name, busy: false, stopped: false, waiting: true } : null;
   }
 
   async mcp(id, message, signal) {
@@ -525,6 +580,7 @@ export class AgentHub {
   }
 
   onTabGone(id, wcId) {
+    this.grants.delete(id);
     const at = this.drivers.get(id);
     if (at) at.dispose();
     this.drivers.delete(id);
@@ -848,13 +904,7 @@ export class AgentHub {
       return [
         {
           label: `Stop sharing this tab with ${owner.client}`,
-          click: () => {
-            owner.shared.delete(tab.id);
-            this.owners.delete(tab.id);
-            if (owner.current === tab.id) owner.current = null;
-            this.release(tab);
-            this.refresh(owner);
-          },
+          click: () => this.revokeControl(tab),
         },
       ];
     }

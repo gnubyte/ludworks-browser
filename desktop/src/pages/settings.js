@@ -2,7 +2,7 @@
 import { h, clear, applyTheme, sideNav, toggle } from './ui.js';
 import { blockerSection } from './settings-blocker.js';
 import { extensionsSection } from './settings-extensions.js';
-import { agentsSection } from './settings-agents.js';
+import { agentsSection, sendSection } from './settings-agents.js';
 
 const app = document.getElementById('app');
 const main = h('main', { class: 'main' });
@@ -41,6 +41,7 @@ async function render() {
   engines = d.engines;
   applyTheme(prefs.theme);
   const db = await call('default-browser.status').catch(() => ({ supported: false }));
+  const ct = await call('themes.state').catch(() => null);
   const sources = await call('import.sources').then((r) => (r && r.ok ? r.value : [])).catch(() => []);
   clear(main);
 
@@ -50,7 +51,7 @@ async function render() {
   homepage.addEventListener('change', () => set({ homepage: homepage.value.trim() || 'ludworks://newtab/' }));
 
   const clearRange = select([['3600000', 'Last hour'], ['86400000', 'Last 24 hours'], ['172800000', 'Last 48 hours'], ['259200000', 'Last 72 hours'], ['604800000', 'Last 7 days'], ['0', 'All time']], '0', () => {});
-  const what = { history: h('input', { type: 'checkbox', checked: true }), cookies: h('input', { type: 'checkbox', checked: true }), cache: h('input', { type: 'checkbox', checked: true }), downloads: h('input', { type: 'checkbox' }), permissions: h('input', { type: 'checkbox' }) };
+  const what = { history: h('input', { type: 'checkbox', checked: true }), cookies: h('input', { type: 'checkbox' }), cache: h('input', { type: 'checkbox', checked: true }), downloads: h('input', { type: 'checkbox' }), permissions: h('input', { type: 'checkbox' }) };
   const label = (cb, t) => h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, cb, t);
   const clearBtn = h('button', { class: 'btn danger' }, 'Clear data');
   clearBtn.addEventListener('click', async () => {
@@ -85,7 +86,14 @@ async function render() {
     ...section(
       'appearance',
       'Appearance',
-      setting('Theme', null, select([['system', 'Match system'], ['light', 'Light'], ['dark', 'Dark']], prefs.theme, (v) => set({ theme: v }))),
+      setting('Theme', ct && ct.theme ? 'The Chrome theme below sets the colours; this applies to private-window popups and pages.' : null, select([['system', 'Match system'], ['light', 'Light'], ['dark', 'Dark']], prefs.theme, (v) => set({ theme: v }))),
+      ct
+        ? setting(
+            ct.theme ? `Chrome theme: ${ct.theme.name}` : 'Chrome themes',
+            ct.theme ? `Installed ${new Date(ct.theme.installedAt).toLocaleDateString()}${ct.theme.source === 'webstore' ? ' from the Chrome Web Store' : ''}. New windows and tabs use it; private windows keep their own look.` : 'Any theme from the Chrome Web Store works here: open one and press “Add to Chrome”. A .crx file or an unpacked theme folder works too (Extensions).',
+            h('div', { style: { display: 'flex', gap: '8px' } }, h('button', { class: 'btn', onclick: () => call('themes.store') }, 'Get themes'), ct.theme ? h('button', { class: 'btn', onclick: async () => { await call('themes.reset'); render(); } }, 'Reset to default') : null),
+          )
+        : null,
       setting('Show bookmarks bar', null, toggle(prefs.showBookmarksBar, (v) => set({ showBookmarksBar: v }))),
       setting('Show home button', null, toggle(prefs.showHomeButton, (v) => set({ showHomeButton: v }))),
     ),
@@ -129,11 +137,12 @@ async function render() {
         ),
       ),
       setting('Spell check', null, toggle(prefs.spellcheck, (v) => set({ spellcheck: v }))),
-      h('div', { class: 'setting', style: { flexWrap: 'wrap' } }, h('div', { class: 'grow' }, h('div', {}, 'Clear browsing data'), h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px' } }, label(what.history, 'History'), label(what.cookies, 'Cookies and site data'), label(what.cache, 'Cached files'), label(what.downloads, 'Download list'), label(what.permissions, 'Site permissions'))), clearRange, clearBtn),
+      h('div', { class: 'setting', style: { flexWrap: 'wrap' } }, h('div', { class: 'grow' }, h('div', {}, 'Clear browsing data'), h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px' } }, label(what.history, 'History'), label(what.cookies, 'Cookies and site data (all time — signs you out of websites)'), label(what.cache, 'Cached files'), label(what.downloads, 'Download list'), label(what.permissions, 'Site permissions'))), clearRange, clearBtn),
     ),
     ...blockerSection(call),
     ...extensionsSection(call),
     ...agentsSection(call),
+    ...sendSection(call),
     h('h2', { id: 'sites' }, 'Site permissions'),
     h('div', { class: 'card' }, permList),
     ...section(
@@ -149,10 +158,17 @@ async function render() {
       setting('Automatic picture in picture', 'A playing video keeps playing in a floating window when you switch to another tab, and returns when you come back.', toggle(prefs.autoPip, (v) => set({ autoPip: v }))),
     ),
     ...section('import', 'Import data', ...importRows, setting('Import bookmarks from a file', 'HTML bookmark files from any browser, or Chrome/Edge "Bookmarks" JSON.', h('button', { class: 'btn', onclick: async (e) => { const r = await call('import.bookmarks.file'); if (r.ok && r.value) e.currentTarget.textContent = `Imported ${r.value.bookmarks}`; } }, 'Choose file…'))),
-    ...section('system', 'System', setting('Use hardware acceleration', 'Takes effect after restarting the browser.', toggle(prefs.hardwareAcceleration, (v) => set({ hardwareAcceleration: v })))),
+    ...section(
+      'system',
+      'System',
+      setting('Use hardware acceleration', 'Takes effect after restarting the browser.', toggle(prefs.hardwareAcceleration, (v) => set({ hardwareAcceleration: v }))),
+    ),
   );
   if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
 }
 
 render();
+window.lwPage.on('page-event', (ev) => {
+  if (ev && ev.type === 'theme') render();
+});
 window.addEventListener('hashchange', () => document.getElementById(location.hash.slice(1))?.scrollIntoView());
